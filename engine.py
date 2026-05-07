@@ -246,10 +246,26 @@ def _equal_weights(symbols):
 # REBALANCE DATES
 # ═══════════════════════════════════════════════════════════════
 
-_FREQ = {"Weekly": "W-FRI", "Monthly": "BME", "Quarterly": "QE", "Yearly": "YE"}
+_WEEK_DAY = {
+    "Monday":    "W-MON",
+    "Tuesday":   "W-TUE",
+    "Wednesday": "W-WED",
+    "Thursday":  "W-THU",
+    "Friday":    "W-FRI",
+}
+_FREQ_OTHER = {"Monthly": "BME", "Quarterly": "QE", "Yearly": "YE"}
 
-def _rebal_dates(index, freq):
-    dates = pd.date_range(index[0], index[-1], freq=_FREQ.get(freq, "W-FRI"))
+def _rebal_dates(index, freq, rebal_day="Friday"):
+    """
+    freq: "Weekly" | "Monthly" | "Quarterly" | "Yearly"
+    rebal_day: Mon–Fri (only applies when freq="Weekly")
+    Snaps each target date forward to the nearest available trading day.
+    """
+    if freq == "Weekly":
+        offset = _WEEK_DAY.get(rebal_day, "W-FRI")
+    else:
+        offset = _FREQ_OTHER.get(freq, "BME")
+    dates = pd.date_range(index[0], index[-1], freq=offset)
     out = set()
     for d in dates:
         fwd = index[index >= d]
@@ -271,13 +287,14 @@ def run_backtest(
     capital=1_000_000, rebal="Weekly", top_n=10, exit_rank=15,
     txn=0.001, slip=0.001, sizing="Inverse Volatility", rf=0.065,
     allocation_mode="Reinvestment", sip_amount=50_000,
+    rebal_day="Friday",
 ):
     prices  = prices.sort_index().dropna(how="all", axis=1).dropna(how="all", axis=0)
     ranks   = signals["ranks"].reindex(prices.index)
     xf      = signals["exit"].reindex(prices.index)
     fs      = signals["filtered"].reindex(prices.index)
     vols    = ann_vol(prices, 20).reindex(prices.index)
-    rdates  = _rebal_dates(prices.index, rebal)
+    rdates  = _rebal_dates(prices.index, rebal, rebal_day=rebal_day)
 
     holdings  = {}   # sym -> shares
     epx       = {}   # sym -> avg entry price

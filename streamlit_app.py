@@ -163,6 +163,10 @@ with st.sidebar:
     with c1: start_dt = st.date_input("Start", value=date.today()-timedelta(days=5*365), label_visibility="collapsed")
     with c2: end_dt   = st.date_input("End",   value=date.today(), label_visibility="collapsed")
     rebal = st.selectbox("Rebalance Frequency", ["Weekly","Monthly","Quarterly","Yearly"])
+    rebal_day = "Friday"
+    if rebal == "Weekly":
+        rebal_day = st.selectbox("Rebalance Day",
+            ["Monday","Tuesday","Wednesday","Thursday","Friday"], index=4)
     st.markdown("---")
 
     sh("Moving Averages (Entry & Exit)")
@@ -364,6 +368,7 @@ try:
         float(capital), rebal, top_n, ex_rank,
         txn, slip, sizing, rf_rate,
         allocation_mode=alloc_mode, sip_amount=float(sip_amount),
+        rebal_day=rebal_day,
     )
 
     prog.progress(82, f"Monte Carlo ({mc_n} sims)…")
@@ -414,7 +419,8 @@ with badge_cols[0]:
         cls = {"BULL":"pill-bull","NEUTRAL":"pill-neutral","BEAR":"pill-bear"}.get(cr,"pill-neutral")
         st.markdown(f'Regime: <span class="{cls}">{cr}</span> · Exposure: `{regime_df["exposure"].iloc[-1]*100:.0f}%`', unsafe_allow_html=True)
 with badge_cols[1]:
-    st.markdown(f'Allocation: `{alloc_mode}` · Sizing: `{sizing}`')
+    day_label = f" ({rebal_day})" if rebal == "Weekly" else ""
+    st.markdown(f'Allocation: `{alloc_mode}` · Sizing: `{sizing}` · Rebal: `{rebal}{day_label}`')
 with badge_cols[2]:
     st.markdown(f'Entry: price > {ma_type}{entry_fast} > {ma_type}{entry_slow} · Exit: price < {ma_type}{exit_ma_p} · Rank by: `{rank_by}`')
 
@@ -733,7 +739,7 @@ with t9:
 st.markdown("---")
 cfg_export={
     "Index": idx_name,"Start":str(start_dt),"End":str(end_dt),
-    "Rebalance":rebal,"MA Type":ma_type,
+    "Rebalance":f"{rebal}{f' ({rebal_day})' if rebal=='Weekly' else ''}","MA Type":ma_type,
     "Entry":f"price>{ma_type}({entry_fast}) AND {ma_type}({entry_fast})>{ma_type}({entry_slow})",
     "Exit":f"price<{ma_type}({exit_ma_p})",
     "Rank by":rank_by,"Top N":top_n,"Exit Rank":ex_rank,
