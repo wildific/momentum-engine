@@ -196,7 +196,7 @@ NSE_INDICES = {
             "HINDALCO.NS","HAL.NS","BEL.NS","GRSE.NS","IREDA.NS",
         ],
     },
-    "Nifty Quality Low Vol 30": {
+    "Nifty Quality Low Vol 30 ": {
         "index_ticker": "^CNXQLV",
         "components": [
             "TCS.NS","INFOSYS.NS","HCLTECH.NS","WIPRO.NS","HINDUNILVR.NS",
