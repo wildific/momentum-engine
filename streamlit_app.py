@@ -1,4 +1,4 @@
-""""
+"""
 🚀 Momentum Engine — Streamlit Cloud App
 NSE Momentum Scanner · Backtester · Monte Carlo · Regime Detection
 """
@@ -525,7 +525,7 @@ with t6:
             sh("STATS")
             for k,v in mc["stats"].items():
                 pg = any(w in k for w in ["Profit","CAGR","Median Final","95th"])
-                mcard(k, fmt(float(v), 0 if "₹" in k else 2), positive_good=pg)
+                mcard(k, fmt(float(v), 0 if "₹" in k else 2), pg)
         with mr:
             fig_d = go.Figure(go.Histogram(x=mc["final"], nbinsx=60,
                 marker=dict(color="#00D4AA",opacity=0.7,line=dict(width=0))))
