@@ -1,0 +1,221 @@
+NSE_INDICES = {
+    "Nifty 50": {
+        "index_ticker": "^NSEI",
+        "components": [
+            "RELIANCE.NS","TCS.NS","HDFCBANK.NS","BHARTIARTL.NS","ICICIBANK.NS",
+            "INFOSYS.NS","SBIN.NS","HINDUNILVR.NS","ITC.NS","KOTAKBANK.NS",
+            "LT.NS","HCLTECH.NS","BAJFINANCE.NS","AXISBANK.NS","MARUTI.NS",
+            "ASIANPAINT.NS","SUNPHARMA.NS","TITAN.NS","ONGC.NS","NTPC.NS",
+            "TATAMOTORS.NS","WIPRO.NS","POWERGRID.NS","ULTRACEMCO.NS","NESTLEIND.NS",
+            "M&M.NS","ADANIENT.NS","JSWSTEEL.NS","COALINDIA.NS","TECHM.NS",
+            "BAJAJFINSV.NS","DIVISLAB.NS","HINDALCO.NS","GRASIM.NS","CIPLA.NS",
+            "BRITANNIA.NS","BPCL.NS","DRREDDY.NS","EICHERMOT.NS","TATACONSUM.NS",
+            "SBILIFE.NS","HDFCLIFE.NS","ADANIPORTS.NS","APOLLOHOSP.NS","BAJAJ-AUTO.NS",
+            "HEROMOTOCO.NS","TATASTEEL.NS","INDUSINDBK.NS","SHRIRAMFIN.NS","LTIM.NS",
+        ],
+    },
+    "Nifty Next 50": {
+        "index_ticker": "^NSMIDCP",
+        "components": [
+            "ADANIGREEN.NS","AMBUJACEM.NS","AUROPHARMA.NS","BAJAJHLDNG.NS","BANKBARODA.NS",
+            "BEL.NS","BERGEPAINT.NS","BOSCHLTD.NS","CANBK.NS","CHOLAFIN.NS",
+            "COLPAL.NS","DABUR.NS","DLF.NS","GAIL.NS","GODREJCP.NS",
+            "HAVELLS.NS","ICICIPRULI.NS","INDUSTOWER.NS","IRCTC.NS","JINDALSTEL.NS",
+            "LICI.NS","LODHA.NS","LUPIN.NS","MARICO.NS","MOTHERSON.NS",
+            "MUTHOOTFIN.NS","NHPC.NS","NAUKRI.NS","OBEROIRLTY.NS","OFSS.NS",
+            "PFC.NS","PIDILITIND.NS","PIIND.NS","PNB.NS","RECLTD.NS",
+            "SIEMENS.NS","SRF.NS","SUNDARMFIN.NS","TORNTPHARM.NS","TORNTPOWER.NS",
+            "TRENT.NS","TVSMOTOR.NS","UBL.NS","UNIONBANK.NS","VBL.NS",
+            "VEDL.NS","ZOMATO.NS","PERSISTENT.NS","KPITTECH.NS","COFORGE.NS",
+        ],
+    },
+    "Nifty 100": {
+        "index_ticker": "^CNX100",
+        "components": [
+            "RELIANCE.NS","TCS.NS","HDFCBANK.NS","BHARTIARTL.NS","ICICIBANK.NS",
+            "INFOSYS.NS","SBIN.NS","HINDUNILVR.NS","ITC.NS","KOTAKBANK.NS",
+            "LT.NS","HCLTECH.NS","BAJFINANCE.NS","AXISBANK.NS","MARUTI.NS",
+            "ASIANPAINT.NS","SUNPHARMA.NS","TITAN.NS","ONGC.NS","NTPC.NS",
+            "TATAMOTORS.NS","WIPRO.NS","POWERGRID.NS","ULTRACEMCO.NS","NESTLEIND.NS",
+            "M&M.NS","ADANIENT.NS","JSWSTEEL.NS","COALINDIA.NS","TECHM.NS",
+            "BAJAJFINSV.NS","DIVISLAB.NS","HINDALCO.NS","GRASIM.NS","CIPLA.NS",
+            "BRITANNIA.NS","BPCL.NS","DRREDDY.NS","EICHERMOT.NS","TATACONSUM.NS",
+            "SBILIFE.NS","HDFCLIFE.NS","ADANIPORTS.NS","APOLLOHOSP.NS","BAJAJ-AUTO.NS",
+            "HEROMOTOCO.NS","TATASTEEL.NS","INDUSINDBK.NS","SHRIRAMFIN.NS","LTIM.NS",
+            "ADANIGREEN.NS","AMBUJACEM.NS","AUROPHARMA.NS","BANKBARODA.NS","BEL.NS",
+            "BERGEPAINT.NS","BOSCHLTD.NS","CANBK.NS","CHOLAFIN.NS","COLPAL.NS",
+            "DABUR.NS","DLF.NS","GAIL.NS","GODREJCP.NS","HAVELLS.NS",
+            "ICICIPRULI.NS","INDUSTOWER.NS","IRCTC.NS","JINDALSTEL.NS","LICI.NS",
+            "LODHA.NS","LUPIN.NS","MARICO.NS","MOTHERSON.NS","MUTHOOTFIN.NS",
+            "NHPC.NS","NAUKRI.NS","OBEROIRLTY.NS","OFSS.NS","PFC.NS",
+            "PIDILITIND.NS","PIIND.NS","PNB.NS","RECLTD.NS","SIEMENS.NS",
+            "SRF.NS","SUNDARMFIN.NS","TORNTPHARM.NS","TORNTPOWER.NS","TRENT.NS",
+            "TVSMOTOR.NS","UBL.NS","UNIONBANK.NS","VBL.NS","VEDL.NS",
+            "ZOMATO.NS","PERSISTENT.NS","KPITTECH.NS","COFORGE.NS","ZYDUSLIFE.NS",
+        ],
+    },
+    "Nifty Midcap 100": {
+        "index_ticker": "^CNXMIDCAP",
+        "components": [
+            "ABCAPITAL.NS","ABFRL.NS","ACC.NS","APLAPOLLO.NS","ASHOKLEY.NS",
+            "ASTRAL.NS","ATUL.NS","AUBANK.NS","BALKRISIND.NS","BANDHANBNK.NS",
+            "BATAINDIA.NS","BHARATFORG.NS","BHEL.NS","CANFINHOME.NS","CESC.NS",
+            "CONCOR.NS","COROMANDEL.NS","CROMPTON.NS","CUMMINSIND.NS","DEEPAKNTR.NS",
+            "ESCORTS.NS","EXIDEIND.NS","FEDERALBNK.NS","GMRINFRA.NS","GNFC.NS",
+            "GODREJIND.NS","HFCL.NS","HINDPETRO.NS","IDFCFIRSTB.NS","IGL.NS",
+            "INDHOTEL.NS","INDIAMART.NS","KANSAINER.NS","LICHSGFIN.NS","LTF.NS",
+            "MANAPPURAM.NS","MAXHEALTH.NS","MCX.NS","MFSL.NS","MPHASIS.NS",
+            "MRF.NS","NATIONALUM.NS","NMDC.NS","PAGEIND.NS","PATANJALI.NS",
+            "PETRONET.NS","POLICYBZR.NS","PRESTIGE.NS","RADICO.NS","SCHAEFFLER.NS",
+        ],
+    },
+    "Nifty Smallcap 100": {
+        "index_ticker": "^CNXSC",
+        "components": [
+            "AARTIIND.NS","AAVAS.NS","AJANTPHARM.NS","ALKYLAMINE.NS","ALLCARGO.NS",
+            "AMARAJABAT.NS","AMBER.NS","APARINDS.NS","APOLLOPIPE.NS","ASAHIINDIA.NS",
+            "AVANTIFEED.NS","BAJAJCON.NS","BALAMINES.NS","BALMLAWRIE.NS","BALRAMCHIN.NS",
+            "BASF.NS","BECTORFOOD.NS","BIKAJI.NS","CARBORUNIV.NS","CASTROLIND.NS",
+            "CERA.NS","CLEAN.NS","CSBBANK.NS","DATAPATTNS.NS","DCMSHRIRAM.NS",
+            "DEEPAKFERT.NS","DHANUKA.NS","ELGIEQUIP.NS","FINCABLES.NS","GPIL.NS",
+            "GRSE.NS","GSFC.NS","HAPPSTMNDS.NS","HOMEFIRST.NS","INTELLECT.NS",
+            "JBCHEPHARM.NS","JKCEMENT.NS","JKPAPER.NS","KALPATPOWR.NS","KAYNES.NS",
+            "KRBL.NS","LATENTVIEW.NS","LAXMIMACH.NS","MAPMYINDIA.NS","MASTEK.NS",
+            "MEDPLUS.NS","MIDHANI.NS","MPSLTD.NS","MTARTECH.NS","NAVA.NS",
+        ],
+    },
+    "Nifty IT": {
+        "index_ticker": "^CNXIT",
+        "components": [
+            "TCS.NS","INFOSYS.NS","HCLTECH.NS","WIPRO.NS","TECHM.NS",
+            "LTIM.NS","MPHASIS.NS","PERSISTENT.NS","COFORGE.NS","OFSS.NS",
+            "KPITTECH.NS","ZENSARTECH.NS","MASTEK.NS","TATAELXSI.NS","CYIENT.NS",
+            "BIRLASOFT.NS","BSOFT.NS","SONATSOFTW.NS","NIITLTD.NS","HEXAWARE.NS",
+        ],
+    },
+    "Nifty Bank": {
+        "index_ticker": "^NSEBANK",
+        "components": [
+            "HDFCBANK.NS","ICICIBANK.NS","KOTAKBANK.NS","SBIN.NS","AXISBANK.NS",
+            "INDUSINDBK.NS","BANKBARODA.NS","PNB.NS","CANBK.NS","FEDERALBNK.NS",
+            "IDFCFIRSTB.NS","BANDHANBNK.NS","AUBANK.NS","KARURVYSYA.NS","RBLBANK.NS",
+        ],
+    },
+    "Nifty Auto": {
+        "index_ticker": "^CNXAUTO",
+        "components": [
+            "MARUTI.NS","TATAMOTORS.NS","M&M.NS","BAJAJ-AUTO.NS","HEROMOTOCO.NS",
+            "EICHERMOT.NS","TVSMOTOR.NS","ASHOKLEY.NS","MOTHERSON.NS","BOSCHLTD.NS",
+            "BHARATFORG.NS","ESCORTS.NS","EXIDEIND.NS","BALKRISIND.NS","SONACOMS.NS",
+        ],
+    },
+    "Nifty Pharma": {
+        "index_ticker": "^CNXPHARMA",
+        "components": [
+            "SUNPHARMA.NS","DIVISLAB.NS","CIPLA.NS","DRREDDY.NS","LUPIN.NS",
+            "AUROPHARMA.NS","TORNTPHARM.NS","ALKEM.NS","BIOCON.NS","ABBOTINDIA.NS",
+            "IPCALAB.NS","NATCOPHARM.NS","AJANTPHARM.NS","GRANULES.NS","ZYDUSLIFE.NS",
+        ],
+    },
+    "Nifty FMCG": {
+        "index_ticker": "^CNXFMCG",
+        "components": [
+            "HINDUNILVR.NS","ITC.NS","NESTLEIND.NS","BRITANNIA.NS","TATACONSUM.NS",
+            "MARICO.NS","DABUR.NS","GODREJCP.NS","COLPAL.NS","EMAMILTD.NS",
+            "UBL.NS","RADICO.NS","VBL.NS","BIKAJI.NS","PATANJALI.NS",
+        ],
+    },
+    "Nifty Metal": {
+        "index_ticker": "^CNXMETAL",
+        "components": [
+            "TATASTEEL.NS","JSWSTEEL.NS","HINDALCO.NS","COALINDIA.NS","VEDL.NS",
+            "NMDC.NS","NATIONALUM.NS","SAIL.NS","APLAPOLLO.NS","GPIL.NS",
+        ],
+    },
+    "Nifty Energy": {
+        "index_ticker": "^CNXENERGY",
+        "components": [
+            "RELIANCE.NS","ONGC.NS","NTPC.NS","POWERGRID.NS","BPCL.NS",
+            "GAIL.NS","HINDPETRO.NS","IOC.NS","ADANIGREEN.NS","ADANIPOWER.NS",
+            "TATAPOWER.NS","TORNTPOWER.NS","SJVN.NS","NHPC.NS","PFC.NS",
+        ],
+    },
+    "Nifty Financial Services": {
+        "index_ticker": "^CNXFINANCE",
+        "components": [
+            "HDFCBANK.NS","ICICIBANK.NS","KOTAKBANK.NS","BAJFINANCE.NS","SBIN.NS",
+            "AXISBANK.NS","BAJAJFINSV.NS","HDFCLIFE.NS","SBILIFE.NS","ICICIPRULI.NS",
+            "SHRIRAMFIN.NS","CHOLAFIN.NS","MUTHOOTFIN.NS","PFC.NS","RECLTD.NS",
+        ],
+    },
+    "Nifty PSU Bank": {
+        "index_ticker": "^CNXPSUBANK",
+        "components": [
+            "SBIN.NS","BANKBARODA.NS","PNB.NS","CANBK.NS","UNIONBANK.NS",
+            "INDIANB.NS","BANKINDIA.NS","IOB.NS","MAHABANK.NS","CENTRALBK.NS",
+        ],
+    },
+    "Nifty Realty": {
+        "index_ticker": "^CNXREALTY",
+        "components": [
+            "DLF.NS","GODREJPROP.NS","LODHA.NS","OBEROIRLTY.NS","PRESTIGE.NS",
+            "PHOENIXLTD.NS","SOBHA.NS","BRIGADE.NS","ANANTRAJ.NS","SUNTECK.NS",
+        ],
+    },
+    "Nifty High Beta 50": {
+        "index_ticker": "^CNXHIGHBETA",
+        "components": [
+            "ADANIENT.NS","ADANIGREEN.NS","ADANIPOWER.NS","TATAMOTORS.NS","JSWSTEEL.NS",
+            "TATASTEEL.NS","HINDALCO.NS","VEDL.NS","BANKBARODA.NS","PNB.NS",
+            "CANBK.NS","IDFCFIRSTB.NS","BANDHANBNK.NS","SAIL.NS","NMDC.NS",
+            "BHEL.NS","GMRINFRA.NS","TATAPOWER.NS","SJVN.NS","NHPC.NS",
+            "ZOMATO.NS","IRCTC.NS","LODHA.NS","DLF.NS","ASHOKLEY.NS",
+            "MOTHERSON.NS","TVSMOTOR.NS","AUROPHARMA.NS","GLENMARK.NS","LAURUS.NS",
+            "HFCL.NS","IDEA.NS","YESBANK.NS","SUZLON.NS","IREDA.NS",
+        ],
+    },
+    "Nifty Alpha 50": {
+        "index_ticker": "^CNXALPHA",
+        "components": [
+            "TRENT.NS","PERSISTENT.NS","KPITTECH.NS","COFORGE.NS","ZOMATO.NS",
+            "IRCTC.NS","ASTRAL.NS","PAGEIND.NS","PIIND.NS","DEEPAKNTR.NS",
+            "LTIM.NS","MPHASIS.NS","OFSS.NS","TATAELXSI.NS","BAJFINANCE.NS",
+            "CHOLAFIN.NS","ANGELONE.NS","TITAN.NS","POLYCAB.NS","HAVELLS.NS",
+            "NAUKRI.NS","NESTLEIND.NS","BERGEPAINT.NS","PIDILITIND.NS","APLAPOLLO.NS",
+            "CDSL.NS","MCX.NS","MAPMYINDIA.NS","LATENTVIEW.NS","KAYNES.NS",
+        ],
+    },
+    "Nifty Momentum 50": {
+        "index_ticker": "^CNXMOMENTUM",
+        "components": [
+            "TRENT.NS","PERSISTENT.NS","KPITTECH.NS","ZOMATO.NS","IRCTC.NS",
+            "LODHA.NS","DLF.NS","COFORGE.NS","MPHASIS.NS","LTIM.NS",
+            "BAJFINANCE.NS","CHOLAFIN.NS","PFC.NS","RECLTD.NS","ADANIGREEN.NS",
+            "TATAMOTORS.NS","TVSMOTOR.NS","BAJAJ-AUTO.NS","SUNPHARMA.NS","DRREDDY.NS",
+            "TITAN.NS","NAUKRI.NS","ASTRAL.NS","POLYCAB.NS","JSWSTEEL.NS",
+            "HINDALCO.NS","HAL.NS","BEL.NS","GRSE.NS","IREDA.NS",
+        ],
+    },
+    "Nifty Quality Low Vol 30": {
+        "index_ticker": "^CNXQLV",
+        "components": [
+            "TCS.NS","INFOSYS.NS","HCLTECH.NS","WIPRO.NS","HINDUNILVR.NS",
+            "NESTLEIND.NS","BRITANNIA.NS","MARICO.NS","COLPAL.NS","ASIANPAINT.NS",
+            "PIDILITIND.NS","TITAN.NS","BAJFINANCE.NS","HDFCBANK.NS","KOTAKBANK.NS",
+            "HDFCLIFE.NS","SBILIFE.NS","SUNPHARMA.NS","DRREDDY.NS","DIVISLAB.NS",
+            "MARUTI.NS","HEROMOTOCO.NS","BAJAJ-AUTO.NS","LT.NS","POWERGRID.NS",
+        ],
+    },
+}
+
+INDEX_CATEGORIES = {
+    "Broad Market":        ["Nifty 50", "Nifty Next 50", "Nifty 100"],
+    "Midcap":              ["Nifty Midcap 100"],
+    "Smallcap":            ["Nifty Smallcap 100"],
+    "Sectoral":            ["Nifty IT", "Nifty Bank", "Nifty Auto", "Nifty Pharma",
+                            "Nifty FMCG", "Nifty Metal", "Nifty Energy",
+                            "Nifty Financial Services", "Nifty PSU Bank",
+                            "Nifty Realty"],
+    "Factor / Smart Beta": ["Nifty High Beta 50", "Nifty Alpha 50",
+                            "Nifty Momentum 50", "Nifty Quality Low Vol 30"],
+}
