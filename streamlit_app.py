@@ -759,9 +759,26 @@ with t10:
         snap_dates = [s["date"] for s in snapshots]
         snap_labels = [d.strftime("%Y-%m-%d (%a)") for d in snap_dates]
 
-        # Year filter
+        # Year filter — use session_state keys to preserve across reruns
         years_avail = sorted(set(d.year for d in snap_dates))
-        sel_year = st.selectbox("Filter by year", ["All"] + [str(y) for y in years_avail])
+        year_options = ["All"] + [str(y) for y in years_avail]
+
+        # Init session state defaults
+        if "sim_year" not in st.session_state:
+            st.session_state["sim_year"] = "All"
+        if "sim_label" not in st.session_state:
+            st.session_state["sim_label"] = None
+
+        sim_c1, sim_c2 = st.columns([1, 3])
+        with sim_c1:
+            sel_year = st.selectbox(
+                "Filter by year", year_options,
+                index=year_options.index(st.session_state["sim_year"])
+                      if st.session_state["sim_year"] in year_options else 0,
+                key="sim_year_box",
+            )
+            st.session_state["sim_year"] = sel_year
+
         if sel_year != "All":
             filtered_snaps = [(i,s) for i,s in enumerate(snapshots) if s["date"].year == int(sel_year)]
         else:
@@ -771,7 +788,18 @@ with t10:
             st.info("No rebalance periods in selected year.")
         else:
             f_labels = [snapshots[i]["date"].strftime("%Y-%m-%d (%a)") for i,_ in filtered_snaps]
-            sel_label = st.select_slider("Select Rebalance Period", options=f_labels)
+
+            # Restore previously selected label if still valid
+            prev_label = st.session_state.get("sim_label")
+            default_idx = f_labels.index(prev_label) if prev_label in f_labels else len(f_labels) // 2
+
+            with sim_c2:
+                sel_label = st.select_slider(
+                    "Select Rebalance Period", options=f_labels,
+                    value=f_labels[default_idx],
+                    key="sim_period_slider",
+                )
+            st.session_state["sim_label"] = sel_label
             sel_idx_s = f_labels.index(sel_label)
             orig_idx, snap = filtered_snaps[sel_idx_s]
             snap_dt = snap["date"]
