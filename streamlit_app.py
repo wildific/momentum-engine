@@ -785,7 +785,7 @@ with t10:
                         return f"color: {color}"
 
                     st.dataframe(
-                        df_snap.style.applymap(color_pnl, subset=["Unrealized P&L (₹)"]),
+                        df_snap.style.map(color_pnl, subset=["Unrealized P&L (₹)"]),
                         use_container_width=True, hide_index=True
                     )
                 else:
@@ -799,7 +799,7 @@ with t10:
                     def color_action(val):
                         return "color:#3FB950" if val=="BUY" else ("color:#F85149" if val in ("SELL","TRIM") else "")
                     st.dataframe(
-                        df_tt.style.applymap(color_action, subset=["action"]),
+                        df_tt.style.map(color_action, subset=["action"]),
                         use_container_width=True, hide_index=True
                     )
                 else:
