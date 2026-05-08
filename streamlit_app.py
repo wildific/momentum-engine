@@ -222,7 +222,7 @@ st.markdown("## 🚀 Momentum Engine")
 st.caption("NSE Momentum Scanner · Backtester · Monte Carlo · Regime Detection · Simulator")
 
 # ── LANDING ───────────────────────────────────────────────────
-if not run_btn:
+if not run_btn and "results" not in st.session_state:
     st.markdown("""
     <div style="background:#161B22;border:1px solid #21262D;border-radius:16px;
                 padding:48px;text-align:center;margin-top:24px">
@@ -280,8 +280,17 @@ if not run_btn:
 
 
 # ── RUN ───────────────────────────────────────────────────────
-prog = st.progress(0,"Starting…")
-try:
+# Skip re-running backtest if results cached and button not pressed
+if not run_btn and "results" in st.session_state:
+    results  = st.session_state["results"]
+    mc       = st.session_state["mc"]
+    signals  = st.session_state["signals"]
+    prices   = st.session_state["prices"]
+    benchmark= st.session_state.get("benchmark", pd.Series(dtype=float))
+    regime_df= st.session_state.get("regime_df", None)
+else:
+  prog = st.progress(0,"Starting…")
+  try:
     prog.progress(5,"Loading prices…")
     if csv_prices:
         csv_prices.seek(0)
@@ -314,6 +323,12 @@ try:
     else:
         bm_ticker = idx_info.get("index_ticker","^NSEI")
         benchmark = fetch_index(bm_ticker, str(start_dt), str(end_dt))
+        # Retry with Nifty 50 if primary fails
+        if benchmark.empty or benchmark.dropna().empty:
+            benchmark = fetch_index("^NSEI", str(start_dt), str(end_dt))
+        # Last resort: equal-weight portfolio of loaded stocks as benchmark
+        if benchmark.empty or benchmark.dropna().empty:
+            benchmark = prices.mean(axis=1).rename("Index")
 
     regime_df = None
     if use_regime and not benchmark.empty:
@@ -357,24 +372,20 @@ try:
     prog.progress(100,"Done ✅"); prog.empty()
 
     # Cache in session state so simulator tab doesn't lose data on widget interaction
-    st.session_state["results"]  = results
-    st.session_state["mc"]       = mc
-    st.session_state["signals"]  = signals
-    st.session_state["prices"]   = prices
-    st.session_state["equity"]   = results["equity"]
-    st.session_state["trades"]   = results["trades"]
+    st.session_state["results"]   = results
+    st.session_state["mc"]        = mc
+    st.session_state["signals"]   = signals
+    st.session_state["prices"]    = prices
+    st.session_state["benchmark"] = benchmark
+    st.session_state["regime_df"] = regime_df
+    st.session_state["equity"]    = results["equity"]
+    st.session_state["trades"]    = results["trades"]
 
-except Exception as e:
+  except Exception as e:
     prog.empty()
     st.error(f"❌ {e}")
     import traceback; st.code(traceback.format_exc())
     st.stop()
-
-# Load from session state (persists across widget interactions)
-results = st.session_state.get("results", results)
-mc      = st.session_state.get("mc", mc)
-signals = st.session_state.get("signals", signals)
-prices  = st.session_state.get("prices", prices)
 
 m  = results["metrics"]
 eq = results["equity"]
@@ -398,17 +409,30 @@ for col,(lbl,val,suf,pg) in zip(hc,[
 ]):
     with col: mcard(lbl, f"{val}{suf}", pg)
 
-b1,b2,b3 = st.columns([2,2,3])
-with b1:
-    if regime_df is not None and not regime_df.empty:
-        cr  = str(regime_df["regime"].iloc[-1]).upper()
-        cls = {"BULL":"pill-bull","NEUTRAL":"pill-neutral","BEAR":"pill-bear"}.get(cr,"pill-neutral")
-        st.markdown(f'Regime: <span class="{cls}">{cr}</span>', unsafe_allow_html=True)
-with b2:
-    dl = f" ({rebal_day})" if rebal=="Weekly" else ""
-    st.markdown(f'`{alloc_mode}` · `{sizing}` · Rebal: `{rebal}{dl}`')
-with b3:
-    st.markdown(f'Entry: price>{ma_type}({entry_fast})>{ma_type}({entry_slow}) · Exit: price<{ma_type}({exit_ma_p}) · Rank: `{rank_by}`')
+# Strategy summary bar
+dl = f" ({rebal_day})" if rebal=="Weekly" else ""
+regime_badge = ""
+if regime_df is not None and not regime_df.empty:
+    cr  = str(regime_df["regime"].iloc[-1]).upper()
+    cls = {"BULL":"pill-bull","NEUTRAL":"pill-neutral","BEAR":"pill-bear"}.get(cr,"pill-neutral")
+    regime_badge = f'&nbsp;&nbsp;|&nbsp;&nbsp;Regime: <span class="{cls}">{cr}</span>'
+
+st.markdown(f"""
+<div style="background:#161B22;border:1px solid #21262D;border-radius:8px;
+            padding:10px 16px;margin-bottom:12px;font-size:13px;color:#8B949E;
+            display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+  <span>📅 <b style="color:#E6EDF3">{rebal}{dl}</b></span>
+  <span style="color:#30363D">|</span>
+  <span>📈 Entry: <b style="color:#E6EDF3">price &gt; {ma_type}({entry_fast}) &gt; {ma_type}({entry_slow})</b></span>
+  <span style="color:#30363D">|</span>
+  <span>📉 Exit: <b style="color:#E6EDF3">price &lt; {ma_type}({exit_ma_p})</b></span>
+  <span style="color:#30363D">|</span>
+  <span>🏆 Rank: <b style="color:#E6EDF3">{rank_by}</b></span>
+  <span style="color:#30363D">|</span>
+  <span>💰 <b style="color:#E6EDF3">{alloc_mode}</b> · <b style="color:#E6EDF3">{sizing}</b></span>
+  {regime_badge}
+</div>
+""", unsafe_allow_html=True)
 st.markdown("---")
 
 
