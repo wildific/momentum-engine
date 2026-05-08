@@ -814,8 +814,14 @@ with t10:
                 fig_s.add_trace(go.Scatter(x=eq_slice.index,y=eq_slice,
                     line=dict(color="#00D4AA",width=2),fill="tozeroy",
                     fillcolor="rgba(0,212,170,0.06)",name="Portfolio"))
-                fig_s.add_vline(x=str(snap_dt.date()),line_dash="dash",line_color="#D29922",
-                    annotation_text="Selected date")
+                # add_vline broken in plotly 6 with date axes — use shape instead
+                fig_s.add_shape(type="line",
+                    x0=str(snap_dt.date()), x1=str(snap_dt.date()),
+                    y0=0, y1=1, yref="paper",
+                    line=dict(color="#D29922", dash="dash", width=2))
+                fig_s.add_annotation(x=str(snap_dt.date()), y=1, yref="paper",
+                    text="Selected", showarrow=False,
+                    font=dict(color="#D29922", size=11))
                 fig_s.update_layout(height=280,**PLOT)
                 st.plotly_chart(fig_s, use_container_width=True)
 
