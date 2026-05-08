@@ -356,11 +356,25 @@ try:
 
     prog.progress(100,"Done ✅"); prog.empty()
 
+    # Cache in session state so simulator tab doesn't lose data on widget interaction
+    st.session_state["results"]  = results
+    st.session_state["mc"]       = mc
+    st.session_state["signals"]  = signals
+    st.session_state["prices"]   = prices
+    st.session_state["equity"]   = results["equity"]
+    st.session_state["trades"]   = results["trades"]
+
 except Exception as e:
     prog.empty()
     st.error(f"❌ {e}")
     import traceback; st.code(traceback.format_exc())
     st.stop()
+
+# Load from session state (persists across widget interactions)
+results = st.session_state.get("results", results)
+mc      = st.session_state.get("mc", mc)
+signals = st.session_state.get("signals", signals)
+prices  = st.session_state.get("prices", prices)
 
 m  = results["metrics"]
 eq = results["equity"]
@@ -814,14 +828,13 @@ with t10:
                 fig_s.add_trace(go.Scatter(x=eq_slice.index,y=eq_slice,
                     line=dict(color="#00D4AA",width=2),fill="tozeroy",
                     fillcolor="rgba(0,212,170,0.06)",name="Portfolio"))
-                # add_vline broken in plotly 6 with date axes — use shape instead
-                fig_s.add_shape(type="line",
-                    x0=str(snap_dt.date()), x1=str(snap_dt.date()),
-                    y0=0, y1=1, yref="paper",
-                    line=dict(color="#D29922", dash="dash", width=2))
-                fig_s.add_annotation(x=str(snap_dt.date()), y=1, yref="paper",
-                    text="Selected", showarrow=False,
-                    font=dict(color="#D29922", size=11))
+                # Mark selected date with a scatter point (plotly 6 compatible)
+                if snap_dt in eq_slice.index:
+                    fig_s.add_trace(go.Scatter(
+                        x=[snap_dt], y=[eq_slice[snap_dt]],
+                        mode="markers",
+                        marker=dict(color="#D29922", size=12, symbol="diamond"),
+                        name="Selected date", showlegend=True))
                 fig_s.update_layout(height=280,**PLOT)
                 st.plotly_chart(fig_s, use_container_width=True)
 
