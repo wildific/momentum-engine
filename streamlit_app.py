@@ -282,12 +282,16 @@ if not run_btn and "results" not in st.session_state:
 # ── RUN ───────────────────────────────────────────────────────
 # Skip re-running backtest if results cached and button not pressed
 if not run_btn and "results" in st.session_state:
-    results  = st.session_state["results"]
-    mc       = st.session_state["mc"]
-    signals  = st.session_state["signals"]
-    prices   = st.session_state["prices"]
-    benchmark= st.session_state.get("benchmark", pd.Series(dtype=float))
-    regime_df= st.session_state.get("regime_df", None)
+    results   = st.session_state["results"]
+    mc        = st.session_state["mc"]
+    signals   = st.session_state["signals"]
+    prices    = st.session_state["prices"]
+    benchmark = st.session_state.get("benchmark", pd.Series(dtype=float))
+    regime_df = st.session_state.get("regime_df", None)
+    try:
+        extra_periods = [int(x.strip()) for x in extra_ma_raw.split(",") if x.strip().isdigit()]
+    except Exception:
+        extra_periods = []
 else:
   prog = st.progress(0,"Starting…")
   try:
@@ -380,6 +384,7 @@ else:
     st.session_state["regime_df"] = regime_df
     st.session_state["equity"]    = results["equity"]
     st.session_state["trades"]    = results["trades"]
+    st.session_state["extra_periods"] = extra_periods
 
   except Exception as e:
     prog.empty()
