@@ -814,7 +814,7 @@ with t10:
                 fig_s.add_trace(go.Scatter(x=eq_slice.index,y=eq_slice,
                     line=dict(color="#00D4AA",width=2),fill="tozeroy",
                     fillcolor="rgba(0,212,170,0.06)",name="Portfolio"))
-                fig_s.add_vline(x=snap_dt,line_dash="dash",line_color="#D29922",
+                fig_s.add_vline(x=str(snap_dt.date()),line_dash="dash",line_color="#D29922",
                     annotation_text="Selected date")
                 fig_s.update_layout(height=280,**PLOT)
                 st.plotly_chart(fig_s, use_container_width=True)
