@@ -481,8 +481,14 @@ def run_backtest(
     bm_cagr = 0.0
     bm_clean = bm.dropna()
     if len(bm_clean) > 5 and bm_clean.iloc[0] != 0:
-        nyrs_bm  = (bm_clean.index[-1] - bm_clean.index[0]).days / 365.25
-        bm_cagr  = ((bm_clean.iloc[-1] / bm_clean.iloc[0]) ** (1 / max(nyrs_bm, 0.01)) - 1) * 100
+        nyrs_bm = (bm_clean.index[-1] - bm_clean.index[0]).days / 365.25
+        bm_cagr = ((bm_clean.iloc[-1] / bm_clean.iloc[0]) ** (1 / max(nyrs_bm, 0.01)) - 1) * 100
+    # Fallback: use normalised benchmark curve
+    if bm_cagr == 0.0 and not bm_curve.empty:
+        bm_c2 = bm_curve.dropna()
+        if len(bm_c2) > 5 and bm_c2.iloc[0] != 0:
+            nyrs_bm = (bm_c2.index[-1] - bm_c2.index[0]).days / 365.25
+            bm_cagr = ((bm_c2.iloc[-1] / bm_c2.iloc[0]) ** (1 / max(nyrs_bm, 0.01)) - 1) * 100
 
     metrics = compute_metrics(equity, bm, trades, rf, capital, total_invested)
     metrics["Index CAGR (%)"] = round(bm_cagr, 2)
