@@ -165,13 +165,16 @@ NSE_INDICES = {
     "Nifty High Beta 50": {
         "index_ticker": "^CNXHIGHBETA",
         "components": [
-            "ADANIENT.NS","ADANIGREEN.NS","ADANIPOWER.NS","TATAMOTORS.NS","JSWSTEEL.NS",
-            "TATASTEEL.NS","HINDALCO.NS","VEDL.NS","BANKBARODA.NS","PNB.NS",
-            "CANBK.NS","IDFCFIRSTB.NS","BANDHANBNK.NS","SAIL.NS","NMDC.NS",
-            "BHEL.NS","GMRINFRA.NS","TATAPOWER.NS","SJVN.NS","NHPC.NS",
-            "ZOMATO.NS","IRCTC.NS","LODHA.NS","DLF.NS","ASHOKLEY.NS",
-            "MOTHERSON.NS","TVSMOTOR.NS","AUROPHARMA.NS","GLENMARK.NS","LAURUS.NS",
-            "HFCL.NS","IDEA.NS","YESBANK.NS","SUZLON.NS","IREDA.NS",
+            "ADANIENSOL.NS","ADANIENT.NS","ADANIGREEN.NS","ADANIPORTS.NS","ADANIPOWER.NS",
+            "ABCAPITAL.NS","AMBER.NS","ANGELONE.NS","APARINDS.NS","BSE.NS",
+            "BANDHANBNK.NS","BHEL.NS","CARTRADE.NS","CDSL.NS","COFORGE.NS",
+            "DLF.NS","GODREJPROP.NS","HINDCOPPER.NS","HUDCO.NS","IIFL.NS",
+            "IRFC.NS","IREDA.NS","NAUKRI.NS","INOXWIND.NS","JSWENERGY.NS",
+            "JIOFIN.NS","KPITTECH.NS","KALYANKJIL.NS","KAYNES.NS","LTF.NS",
+            "LODHA.NS","MAZDOCK.NS","MOTILALOFS.NS","MCX.NS","NBCC.NS",
+            "NATIONALUM.NS","POLICYBZR.NS","PFC.NS","PRESTIGE.NS","RECLTD.NS",
+            "RVNL.NS","RPOWER.NS","MOTHERSON.NS","SHRIRAMFIN.NS","SAIL.NS",
+            "TATAPOWER.NS","TATASTEEL.NS","VEDL.NS","IDEA.NS","WOCKPHARMA.NS",
         ],
     },
     "Nifty Alpha 50": {
@@ -196,7 +199,7 @@ NSE_INDICES = {
             "HINDALCO.NS","HAL.NS","BEL.NS","GRSE.NS","IREDA.NS",
         ],
     },
-    "Nifty Quality Low Vol 30 ": {
+    "Nifty Quality Low Vol 30": {
         "index_ticker": "^CNXQLV",
         "components": [
             "TCS.NS","INFOSYS.NS","HCLTECH.NS","WIPRO.NS","HINDUNILVR.NS",
