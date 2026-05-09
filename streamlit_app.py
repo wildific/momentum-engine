@@ -35,7 +35,7 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
 .stTabs [aria-selected="true"]{background:#0D1117!important;color:#00D4AA!important;}
 .mc{background:#161B22;border:1px solid #21262D;border-radius:10px;padding:14px 18px;margin-bottom:8px;}
 .ml{font-size:10px;color:#7D8590;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;}
-.mv{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:#E6EDF3;}
+.mv{font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:700;color:#E6EDF3;word-break:break-word;line-height:1.3;}
 .mv.pos{color:#3FB950;}.mv.neg{color:#F85149;}.mv.neu{color:#58A6FF;}
 .sh{font-size:11px;font-weight:700;color:#00D4AA;text-transform:uppercase;letter-spacing:2px;
     padding:6px 0 8px;border-bottom:1px solid #21262D;margin-bottom:14px;margin-top:4px;}
@@ -415,7 +415,7 @@ for col,(lbl,val,suf,pg) in zip(hc,[
     ("Max Drawdown",  fmt(m.get("Max Drawdown (%)",0)),"%",False),
     ("Sharpe",        fmt(m.get("Sharpe Ratio",0),3), "",  True),
     ("Sortino",       fmt(m.get("Sortino Ratio",0),3),"",  True),
-    ("Total P&L",     f"₹{m.get('Total P&L (₹)',0):,.0f}","",True),
+    ("Total P&L",     ("₹"+f"{m.get('Total P&L (₹)',0)/1e5:.1f}"+"L") if abs(m.get('Total P&L (₹)',0))>=1e5 else f"₹{m.get('Total P&L (₹)',0):,.0f}","",True),
     ("Total Trades",  str(m.get("Total Trades",0)),   "",  True),
 ]):
     with col: mcard(lbl, f"{val}{suf}", pg)
@@ -426,7 +426,10 @@ regime_badge = ""
 if regime_df is not None and not regime_df.empty:
     cr  = str(regime_df["regime"].iloc[-1]).upper()
     cls = {"BULL":"pill-bull","NEUTRAL":"pill-neutral","BEAR":"pill-bear"}.get(cr,"pill-neutral")
-    regime_badge = f'&nbsp;&nbsp;|&nbsp;&nbsp;Regime: <span class="{cls}">{cr}</span>'
+    ra_display = ra_map.get(regime_action, regime_action)
+    regime_badge = (f'&nbsp;&nbsp;|&nbsp;&nbsp;Latest Regime: <span class="{cls}">{cr}</span>'
+                   + (f'&nbsp;<span style="color:#7D8590;font-size:11px">[Bear: {ra_display}]</span>'
+                      if use_regime else ''))
 
 st.markdown(f"""
 <div style="background:#161B22;border:1px solid #21262D;border-radius:8px;
@@ -837,7 +840,8 @@ with t10:
             # Regime badge
             reg_c = snap.get("regime","—")
             cls   = {"BULL":"pill-bull","NEUTRAL":"pill-neutral","BEAR":"pill-bear"}.get(reg_c,"pill-neutral")
-            st.markdown(f'Regime on this date: <span class="{cls}">{reg_c}</span>', unsafe_allow_html=True)
+            action_info = f" · Action: <b>{regime_action}</b>" if use_regime else ""
+            st.markdown(f'Regime on this date: <span class="{cls}">{reg_c}</span>{action_info}', unsafe_allow_html=True)
 
             st.markdown("---")
             h_col, t_col = st.columns([3,2])
@@ -847,9 +851,10 @@ with t10:
                 if snap["holdings"]:
                     df_snap = pd.DataFrame([
                         {"Symbol": sym,
-                         "Shares": v["shares"],
-                         "Entry Price (₹)": v["entry_price"],
+                         "Shares": round(v["shares"], 2),
+                         "Cost Basis/sh (₹)": v["entry_price"],
                          "Current Price (₹)": v["curr_price"],
+                         "Cost Value (₹)": v.get("cost_value", round(v["shares"]*v["entry_price"],2)),
                          "Market Value (₹)": v["mkt_value"],
                          "Unrealized P&L (₹)": v["unrealised"],
                          "Weight (%)": v["weight_pct"]}
