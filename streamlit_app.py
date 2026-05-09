@@ -197,10 +197,13 @@ with st.sidebar:
 
     sh("Regime Detection")
     use_regime   = st.toggle("Enable Regime Filter", value=True)
-    reg_fast     = st.number_input("Regime fast MA", 20, 200, 50,  10, disabled=not use_regime)
-    reg_slow     = st.number_input("Regime slow MA", 50, 500, 200, 10, disabled=not use_regime)
+    st.caption("BULL = price > Short MA > Long MA")
+    reg_fast     = st.number_input("Short MA period (e.g. 50)", 10, 500, 50,  10, disabled=not use_regime)
+    reg_slow     = st.number_input("Long MA period  (e.g. 200)", 10, 500, 200, 10, disabled=not use_regime)
     reg_ma_type  = st.selectbox("Regime MA type", ["EMA","SMA"], disabled=not use_regime)
     vol_thresh   = st.slider("Bull vol threshold (%)", 10, 50, 20, disabled=not use_regime) / 100
+    if reg_fast >= reg_slow:
+        st.warning(f"⚠️ Short MA ({reg_fast}) ≥ Long MA ({reg_slow}). They will be auto-swapped.")
     regime_action = "Scale Exposure"
     if use_regime:
         regime_action = st.selectbox("Bear Regime Action", [
