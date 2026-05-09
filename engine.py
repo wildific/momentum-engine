@@ -1,7 +1,7 @@
 """
-Momentum Engine Core v4
-Fixes: equal weight sizing, index CAGR, correlation filter
-New: regime action modes, per-period simulator data, ticker override support
+Momentum Engine Core v5
+Fixes: P&L cost basis ties out, exit MA type separate from entry,
+       universe strictly filtered to index components
 """
 import io, warnings
 import numpy as np
@@ -113,7 +113,7 @@ def compute_rank_score(prices, rank_by="Momentum", weights=None, rf=0.065):
         return score
     elif rank_by == "Low Volatility":
         return -v
-    else:  # Momentum (risk-adjusted)
+    else:
         score = pd.DataFrame(0.0, index=prices.index, columns=prices.columns)
         for w, wt in weights.items():
             r = rolling_return(prices, w).fillna(0).divide(v).fillna(0)
@@ -125,36 +125,34 @@ def compute_rank_score(prices, rank_by="Momentum", weights=None, rf=0.065):
 # CORRELATION FILTER
 # ═══════════════════════════════════════════════════════════════
 
-def apply_correlation_filter(candidates, prices, corr_window=60, corr_threshold=0.7, top_n=10):
-    """
-    From ranked candidates list, greedily select stocks where pairwise
-    correlation < corr_threshold. Returns up to top_n uncorrelated stocks.
-    candidates: list of symbols ordered best-rank first
-    """
+def apply_correlation_filter(candidates, prices, corr_window=60,
+                              corr_threshold=0.7, top_n=10):
     if not candidates or corr_threshold >= 1.0:
         return candidates[:top_n]
-
-    recent = prices[candidates].tail(corr_window).pct_change().dropna()
+    valid = [c for c in candidates if c in prices.columns]
+    if not valid:
+        return candidates[:top_n]
+    recent = prices[valid].tail(corr_window).pct_change().dropna()
     if recent.empty or len(recent) < 10:
         return candidates[:top_n]
-
     corr = recent.corr()
     selected = []
-    for sym in candidates:
+    for sym in valid:
         if len(selected) >= top_n:
             break
         if not selected:
             selected.append(sym)
             continue
-        # Check correlation with all already-selected stocks
-        max_corr = max(abs(corr.loc[sym, s]) for s in selected if sym in corr.index and s in corr.columns)
-        if max_corr < corr_threshold:
+        corr_vals = [abs(corr.loc[sym, s])
+                     for s in selected
+                     if sym in corr.index and s in corr.columns]
+        if not corr_vals or max(corr_vals) < corr_threshold:
             selected.append(sym)
     return selected
 
 
 # ═══════════════════════════════════════════════════════════════
-# ENTRY / EXIT
+# ENTRY / EXIT  — separate MA types
 # ═══════════════════════════════════════════════════════════════
 
 def entry_filter(prices, entry_fast_ma, entry_slow_ma):
@@ -165,21 +163,41 @@ def exit_filter(prices, exit_ma_df):
 
 
 # ═══════════════════════════════════════════════════════════════
-# SIGNALS
+# SIGNALS — exit_ma_type independent of entry ma_type
 # ═══════════════════════════════════════════════════════════════
 
 def generate_signals(prices, mom_weights, entry_fast_p, entry_slow_p,
                      exit_ma_p, ma_type, top_n, exit_rank,
-                     rank_by="Momentum", rf=0.065):
-    all_periods = sorted({int(entry_fast_p), int(entry_slow_p), int(exit_ma_p)})
-    mas = {p: ma(prices, p, ma_type) for p in all_periods}
-    ef  = entry_filter(prices, mas[int(entry_fast_p)], mas[int(entry_slow_p)])
-    xf  = exit_filter(prices, mas[int(exit_ma_p)])
+                     rank_by="Momentum", rf=0.065, exit_ma_type=None):
+
+    _exit_type = exit_ma_type if exit_ma_type else ma_type
+
+    # Entry MAs (use entry ma_type)
+    entry_mas = {
+        int(entry_fast_p): ma(prices, int(entry_fast_p), ma_type),
+        int(entry_slow_p): ma(prices, int(entry_slow_p), ma_type),
+    }
+    # Exit MA (independent type)
+    exit_ma_series = ma(prices, int(exit_ma_p), _exit_type)
+
+    ef = entry_filter(prices, entry_mas[int(entry_fast_p)], entry_mas[int(entry_slow_p)])
+    xf = exit_filter(prices, exit_ma_series)
+
     score    = compute_rank_score(prices, rank_by=rank_by, weights=mom_weights, rf=rf)
     filtered = score.where(ef)
     ranks    = filtered.rank(axis=1, ascending=False, method="first")
-    return {"score": score, "filtered": filtered, "ranks": ranks,
-            "exit": xf, "entry_filter": ef, "mas": mas}
+
+    all_mas = dict(entry_mas)
+    all_mas[int(exit_ma_p)] = exit_ma_series
+
+    return {
+        "score":        score,
+        "filtered":     filtered,
+        "ranks":        ranks,
+        "exit":         xf,
+        "entry_filter": ef,
+        "mas":          all_mas,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -208,7 +226,6 @@ def detect_regime(index_series, fast=50, slow=200, ma_type="EMA", vol_thresh=0.2
 
 
 def get_regime_info(regime_df, dt):
-    """Returns (regime_str, exposure_float) for a given date."""
     if regime_df is None:
         return "BULL", 1.0
     if dt in regime_df.index:
@@ -222,11 +239,10 @@ def get_regime_info(regime_df, dt):
 
 
 # ═══════════════════════════════════════════════════════════════
-# POSITION SIZING  — FIXED EQUAL WEIGHT
+# POSITION SIZING
 # ═══════════════════════════════════════════════════════════════
 
 def _equal_weights(symbols):
-    """Strict equal weight — each stock gets exactly 1/N of portfolio."""
     n = len(symbols)
     return {s: 1.0 / n for s in symbols} if n > 0 else {}
 
@@ -244,27 +260,24 @@ def _inv_vol_weights(symbols, vol_df, dt):
 # REBALANCE DATES
 # ═══════════════════════════════════════════════════════════════
 
-_WEEK_DAY    = {"Monday":"W-MON","Tuesday":"W-TUE","Wednesday":"W-WED",
-                "Thursday":"W-THU","Friday":"W-FRI"}
-_FREQ_OTHER  = {"Monthly":"BME","Quarterly":"QE","Yearly":"YE"}
+_WEEK_DAY   = {"Monday":"W-MON","Tuesday":"W-TUE","Wednesday":"W-WED",
+               "Thursday":"W-THU","Friday":"W-FRI"}
+_FREQ_OTHER = {"Monthly":"BME","Quarterly":"QE","Yearly":"YE"}
 
 def _rebal_dates(index, freq, rebal_day="Friday"):
-    offset = _WEEK_DAY.get(rebal_day,"W-FRI") if freq=="Weekly" else _FREQ_OTHER.get(freq,"BME")
-    dates  = pd.date_range(index[0], index[-1], freq=offset)
+    offset = (_WEEK_DAY.get(rebal_day, "W-FRI")
+              if freq == "Weekly" else _FREQ_OTHER.get(freq, "BME"))
+    dates = pd.date_range(index[0], index[-1], freq=offset)
     out = set()
     for d in dates:
         fwd = index[index >= d]
-        if len(fwd): out.add(fwd[0])
+        if len(fwd):
+            out.add(fwd[0])
     return out
 
 
 # ═══════════════════════════════════════════════════════════════
-# BACKTEST ENGINE
-# regime_action:
-#   "Scale Exposure"        — original behaviour (exposure multiplier)
-#   "Exit per Strategy"     — honour exit signals, NO new entries
-#   "Keep Stocks No Entry"  — hold current, NO new entries or rebalance buys
-#   "Exit All No Entry"     — sell everything, NO new entries
+# BACKTEST
 # ═══════════════════════════════════════════════════════════════
 
 def run_backtest(
@@ -275,22 +288,31 @@ def run_backtest(
     rebal_day="Friday",
     use_corr_filter=False, corr_threshold=0.7, corr_window=60,
     regime_action="Scale Exposure",
+    universe=None,
 ):
-    prices  = prices.sort_index().dropna(how="all", axis=1).dropna(how="all", axis=0)
-    ranks   = signals["ranks"].reindex(prices.index)
-    xf      = signals["exit"].reindex(prices.index)
-    fs      = signals["filtered"].reindex(prices.index)
-    vols    = ann_vol(prices, 20).reindex(prices.index)
-    rdates  = _rebal_dates(prices.index, rebal, rebal_day)
+    prices = prices.sort_index().dropna(how="all", axis=1).dropna(how="all", axis=0)
+
+    # ── Strictly enforce universe (only index components) ─────
+    if universe:
+        clean_uni = [s.replace(".NS", "") for s in universe]
+        allowed   = [c for c in prices.columns if c in clean_uni]
+        if allowed:
+            prices = prices[allowed]
+
+    # Align signals to prices columns
+    sig_cols = prices.columns
+    ranks = signals["ranks"].reindex(prices.index).reindex(columns=sig_cols)
+    xf    = signals["exit"].reindex(prices.index).reindex(columns=sig_cols)
+    fs    = signals["filtered"].reindex(prices.index).reindex(columns=sig_cols)
+    vols  = ann_vol(prices, 20).reindex(prices.index)
+    rdates = _rebal_dates(prices.index, rebal, rebal_day)
 
     holdings       = {}   # sym -> shares
-    epx            = {}   # sym -> avg entry price
+    epx            = {}   # sym -> full cost basis per share (includes buy txn + slippage)
     edt            = {}   # sym -> entry date
     cash           = float(capital)
     total_invested = float(capital)
     eq_rows, tr_rows = [], []
-
-    # Per-period snapshot for simulator tab
     period_snapshots = []
 
     for dt in prices.index:
@@ -308,11 +330,10 @@ def run_backtest(
         )
         eq_rows.append({"date": dt, "value": port_val})
 
-        # ── Regime action
         regime_str, exposure = get_regime_info(regime_df, dt)
 
+        # ── Regime: Exit All
         if regime_action == "Exit All No Entry" and regime_str == "BEAR":
-            # Liquidate everything, stop
             for sym in list(holdings):
                 if sym not in px.index or pd.isna(px[sym]): continue
                 spx  = float(px[sym]) * (1 - slip)
@@ -324,12 +345,13 @@ def run_backtest(
                     "value":round(proc,2),"pnl":round(pnl,2),
                     "held_days":(dt-edt[sym]).days if sym in edt else 0})
                 holdings.pop(sym,None); epx.pop(sym,None); edt.pop(sym,None)
-            continue  # no new entries
+            continue
 
+        # ── Regime: Keep Stocks
         if regime_action == "Keep Stocks No Entry" and regime_str == "BEAR":
-            continue  # hold existing, no exits, no new entries
+            continue
 
-        # ── Exit signals (strategy-based)
+        # ── Strategy exits
         for sym in list(holdings):
             exit_triggered = bool(xf.loc[dt, sym]) if sym in xf.columns else False
             rank_too_low   = (float(ranks.loc[dt, sym]) > exit_rank) if sym in ranks.columns else False
@@ -344,23 +366,20 @@ def run_backtest(
                     "held_days":(dt-edt[sym]).days if sym in edt else 0})
                 holdings.pop(sym,None); epx.pop(sym,None); edt.pop(sym,None)
 
+        # ── Regime: Exit per Strategy
         if regime_action == "Exit per Strategy" and regime_str == "BEAR":
-            continue  # exits processed above, no new entries
+            continue
 
         # ── Rebalance
         if dt in rdates:
             today_r  = ranks.loc[dt].dropna()
             eligible = fs.loc[dt].dropna().index.tolist()
+            ranked   = today_r[today_r.index.isin(eligible)].sort_values().index.tolist()
 
-            # Rank by score
-            ranked_candidates = today_r[today_r.index.isin(eligible)].sort_values().index.tolist()
-
-            # Correlation filter
-            if use_corr_filter and len(ranked_candidates) > top_n:
-                top = apply_correlation_filter(
-                    ranked_candidates, prices, corr_window, corr_threshold, top_n)
+            if use_corr_filter and len(ranked) > top_n:
+                top = apply_correlation_filter(ranked, prices, corr_window, corr_threshold, top_n)
             else:
-                top = ranked_candidates[:top_n]
+                top = ranked[:top_n]
 
             # Sell stocks no longer in top
             for sym in [s for s in list(holdings) if s not in top]:
@@ -375,65 +394,52 @@ def run_backtest(
                     "held_days":(dt-edt[sym]).days if sym in edt else 0})
                 holdings.pop(sym,None); epx.pop(sym,None); edt.pop(sym,None)
 
-            if not top:
-                continue
+            if not top: continue
 
-            # Portfolio value post-sells
             pv_now = cash + sum(
                 holdings[s] * float(px[s]) for s in holdings
                 if s in px.index and not pd.isna(px[s])
             )
 
-            # Investable amount
-            if allocation_mode == "Reinvestment":
-                invest = pv_now * (exposure if regime_action == "Scale Exposure" else 1.0)
-            elif allocation_mode == "SIP":
-                invest = pv_now * (exposure if regime_action == "Scale Exposure" else 1.0)
-            else:  # Fixed
+            if allocation_mode == "Fixed":
                 invest = min(float(capital), pv_now)
-
-            if invest <= 0:
-                continue
-
-            # ── POSITION SIZING — strictly enforced
-            if sizing == "Equal Weight":
-                # Each stock gets exactly invest/top_n
-                wmap = _equal_weights(top)
             else:
-                wmap = _inv_vol_weights(top, vols, dt)
+                invest = pv_now * (exposure if regime_action == "Scale Exposure" else 1.0)
 
-            # Buy / top-up each stock
+            if invest <= 0: continue
+
+            wmap = (_equal_weights(top) if sizing == "Equal Weight"
+                    else _inv_vol_weights(top, vols, dt))
+
             for sym in top:
                 if sym not in px.index or pd.isna(px[sym]): continue
                 bpx       = float(px[sym]) * (1 + slip)
-                cost_per  = bpx * (1 + txn)
-                target_val= invest * wmap.get(sym, 0.0)   # target ₹ value
-                target_sh = target_val / bpx if bpx > 0 else 0.0
+                cost_per  = bpx * (1 + txn)        # full cost basis per share
+                target_sh = (invest * wmap.get(sym, 0.0)) / cost_per if cost_per > 0 else 0.0
+                delta_sh  = target_sh - holdings.get(sym, 0.0)
 
-                current_val = holdings.get(sym, 0.0) * bpx
-                delta_val   = target_val - current_val
-                delta_sh    = delta_val / bpx if bpx > 0 else 0.0
-
-                if delta_sh > 0.01:   # need to buy more
-                    cost = delta_sh * cost_per
-                    cost = min(cost, cash)
-                    sh   = cost / cost_per
+                if delta_sh > 0.001:
+                    buy_cost = min(delta_sh * cost_per, cash)
+                    sh = buy_cost / cost_per if cost_per > 0 else 0.0
                     if sh <= 0: continue
                     cash -= sh * cost_per
                     if sym in holdings:
-                        old = holdings[sym]; op = epx.get(sym, bpx)
+                        old = holdings[sym]; op = epx.get(sym, cost_per)
                         holdings[sym] = old + sh
-                        epx[sym] = (old * op + sh * bpx) / holdings[sym]
+                        epx[sym] = (old * op + sh * cost_per) / holdings[sym]
                     else:
-                        holdings[sym] = sh; epx[sym] = bpx; edt[sym] = dt
+                        holdings[sym] = sh
+                        epx[sym]      = cost_per   # ← full cost basis including txn
+                        edt[sym]      = dt
                     tr_rows.append({"date":dt,"action":"BUY","symbol":sym,
                         "price":round(bpx,2),"shares":round(sh,4),
                         "value":round(sh*cost_per,2),"pnl":0,"held_days":0})
-                elif delta_sh < -0.01:  # need to trim
+
+                elif delta_sh < -0.001:
                     trim_sh  = abs(delta_sh)
                     sell_px  = float(px[sym]) * (1 - slip)
                     proceeds = trim_sh * sell_px * (1 - txn)
-                    pnl_trim = proceeds - trim_sh * epx.get(sym, sell_px)
+                    pnl_trim = proceeds - trim_sh * epx.get(sym, cost_per)
                     cash    += proceeds
                     holdings[sym] = max(0.0, holdings[sym] - trim_sh)
                     if holdings[sym] < 0.001:
@@ -442,31 +448,31 @@ def run_backtest(
                         "price":round(sell_px,2),"shares":round(trim_sh,4),
                         "value":round(proceeds,2),"pnl":round(pnl_trim,2),"held_days":0})
 
-            # ── Snapshot for simulator
-            snap_holdings = {}
-            for sym, sh_count in holdings.items():
+            # Simulator snapshot
+            snap_h = {}
+            for sym, sh_cnt in holdings.items():
                 if sym in px.index and not pd.isna(px[sym]):
-                    curr_px   = float(px[sym])
-                    mkt_val   = sh_count * curr_px
-                    unreal    = mkt_val - sh_count * epx.get(sym, curr_px)
-                    snap_holdings[sym] = {
-                        "shares":      round(sh_count, 4),
-                        "entry_price": round(epx.get(sym, curr_px), 2),
-                        "curr_price":  round(curr_px, 2),
-                        "mkt_value":   round(mkt_val, 2),
-                        "unrealised":  round(unreal, 2),
-                        "weight_pct":  0,  # filled below
+                    cp  = float(px[sym])
+                    mv  = sh_cnt * cp
+                    cv  = sh_cnt * epx.get(sym, cp)
+                    snap_h[sym] = {
+                        "shares":      round(sh_cnt, 4),
+                        "entry_price": round(epx.get(sym, cp), 2),
+                        "curr_price":  round(cp, 2),
+                        "mkt_value":   round(mv, 2),
+                        "unrealised":  round(mv - cv, 2),
+                        "weight_pct":  0,
                     }
-            total_mkt = sum(v["mkt_value"] for v in snap_holdings.values())
-            for sym in snap_holdings:
-                snap_holdings[sym]["weight_pct"] = round(
-                    snap_holdings[sym]["mkt_value"] / total_mkt * 100 if total_mkt else 0, 2)
+            tot_mv = sum(v["mkt_value"] for v in snap_h.values())
+            for sym in snap_h:
+                snap_h[sym]["weight_pct"] = round(
+                    snap_h[sym]["mkt_value"] / tot_mv * 100 if tot_mv else 0, 2)
 
             period_snapshots.append({
                 "date":          dt,
                 "portfolio_val": round(port_val, 2),
                 "cash":          round(cash, 2),
-                "holdings":      snap_holdings,
+                "holdings":      snap_h,
                 "regime":        regime_str,
                 "trades_today":  [r for r in tr_rows if r["date"] == dt],
             })
@@ -475,23 +481,38 @@ def run_backtest(
     trades = pd.DataFrame(tr_rows) if tr_rows else pd.DataFrame()
 
     bm = benchmark.reindex(equity.index).ffill()
-    bm_curve = (bm / bm.iloc[0] * capital) if (not bm.empty and bm.iloc[0] != 0) else pd.Series(dtype=float)
+    bm_curve = (bm / bm.iloc[0] * capital
+                if not bm.empty and bm.iloc[0] != 0
+                else pd.Series(dtype=float))
 
-    # Compute benchmark CAGR properly
+    # Benchmark CAGR with fallbacks
     bm_cagr = 0.0
-    bm_clean = bm.dropna()
-    if len(bm_clean) > 5 and bm_clean.iloc[0] != 0:
-        nyrs_bm = (bm_clean.index[-1] - bm_clean.index[0]).days / 365.25
-        bm_cagr = ((bm_clean.iloc[-1] / bm_clean.iloc[0]) ** (1 / max(nyrs_bm, 0.01)) - 1) * 100
-    # Fallback: use normalised benchmark curve
-    if bm_cagr == 0.0 and not bm_curve.empty:
-        bm_c2 = bm_curve.dropna()
-        if len(bm_c2) > 5 and bm_c2.iloc[0] != 0:
-            nyrs_bm = (bm_c2.index[-1] - bm_c2.index[0]).days / 365.25
-            bm_cagr = ((bm_c2.iloc[-1] / bm_c2.iloc[0]) ** (1 / max(nyrs_bm, 0.01)) - 1) * 100
+    for bm_s in [bm.dropna(), bm_curve.dropna()]:
+        if len(bm_s) > 5 and bm_s.iloc[0] != 0:
+            nyrs_b = (bm_s.index[-1] - bm_s.index[0]).days / 365.25
+            bm_cagr = ((bm_s.iloc[-1] / bm_s.iloc[0]) ** (1 / max(nyrs_b, 0.01)) - 1) * 100
+            if bm_cagr != 0:
+                break
 
     metrics = compute_metrics(equity, bm, trades, rf, capital, total_invested)
     metrics["Index CAGR (%)"] = round(bm_cagr, 2)
+
+    # ── P&L reconciliation — Realized + Unrealized = Total ───
+    sells = trades[trades["action"].isin(["SELL","TRIM"])] if not trades.empty and "action" in trades.columns else pd.DataFrame()
+    realized = float(sells["pnl"].sum()) if not sells.empty and "pnl" in sells.columns else 0.0
+
+    final_mkt = sum(
+        holdings[s] * float(prices.iloc[-1][s])
+        for s in holdings
+        if s in prices.columns and not pd.isna(prices.iloc[-1][s])
+    )
+    final_cost = sum(holdings[s] * epx.get(s, 0) for s in holdings)
+    unrealized = final_mkt - final_cost
+    total_pnl  = realized + unrealized
+
+    metrics["Realized P&L (₹)"]   = round(realized, 0)
+    metrics["Unrealized P&L (₹)"] = round(unrealized, 0)
+    metrics["Total P&L (₹)"]      = round(total_pnl, 0)
 
     return {
         "equity":           equity,
@@ -523,8 +544,8 @@ def compute_metrics(equity, benchmark, trades, rf, capital, total_invested=None)
 
     bm = benchmark.reindex(eq.index).ffill().dropna()
     if len(bm) > 2 and bm.iloc[0] != 0:
-        nyrs_bm  = (bm.index[-1] - bm.index[0]).days / 365.25
-        bm_cagr  = ((bm.iloc[-1] / bm.iloc[0]) ** (1 / max(nyrs_bm, 0.01)) - 1) * 100
+        nyrs_bm = (bm.index[-1] - bm.index[0]).days / 365.25
+        bm_cagr = ((bm.iloc[-1] / bm.iloc[0]) ** (1 / max(nyrs_bm, 0.01)) - 1) * 100
     else:
         bm_cagr = 0.0
 
@@ -541,10 +562,10 @@ def compute_metrics(equity, benchmark, trades, rf, capital, total_invested=None)
     an = eq.resample("YE").last().pct_change().dropna()
 
     if not trades.empty and "pnl" in trades.columns and "action" in trades.columns:
-        sells = trades[trades["action"].isin(["SELL","TRIM"])]
-        nt    = len(sells)
-        pos   = int((sells["pnl"] > 0).sum())
-        real  = float(sells["pnl"].sum())
+        sells  = trades[trades["action"].isin(["SELL","TRIM"])]
+        nt     = len(sells)
+        pos    = int((sells["pnl"] > 0).sum())
+        real   = float(sells["pnl"].sum())
         try:
             churn = trades.groupby(
                 pd.to_datetime(trades["date"]).dt.to_period("M")).size().mean()
@@ -569,6 +590,7 @@ def compute_metrics(equity, benchmark, trades, rf, capital, total_invested=None)
         "Sortino Ratio":           round(sortino, 3),
         "Annual Volatility (%)":   round(float(dr.std()) * np.sqrt(252) * 100, 2),
         "Realized P&L (₹)":        round(real, 0),
+        "Unrealized P&L (₹)":      0.0,
         "Total P&L (₹)":           round(float(eq.iloc[-1] - total_invested), 0),
         "Total Invested (₹)":      round(total_invested, 0),
         "Total Trades":            nt,
@@ -619,7 +641,7 @@ def run_monte_carlo(equity, trades=None, n_sim=1000, method="Bootstrap",
     cagr  = ((final / capital) ** (1 / max(nyrs, 0.01)) - 1) * 100
     rm    = np.maximum.accumulate(paths, axis=1)
     dd    = ((paths - rm) / np.where(rm == 0, 1, rm)).min(axis=1) * 100
-    pcts  = {p: np.percentile(paths, p, axis=0) for p in [5,25,50,75,95]}
+    pcts  = {p: np.percentile(paths, p, axis=0) for p in [5, 25, 50, 75, 95]}
     v95   = float(np.percentile(ret, 5))
     cv95  = float(ret[ret <= v95].mean()) if (ret <= v95).any() else v95
 
