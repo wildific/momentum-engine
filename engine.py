@@ -205,6 +205,10 @@ def generate_signals(prices, mom_weights, entry_fast_p, entry_slow_p,
 # ═══════════════════════════════════════════════════════════════
 
 def detect_regime(index_series, fast=50, slow=200, ma_type="EMA", vol_thresh=0.20):
+    # Ensure fast < slow (fast = shorter period = more reactive)
+    # If user accidentally swaps them, auto-correct
+    if fast > slow:
+        fast, slow = slow, fast
     df = index_series.to_frame("price").copy()
     fn = ema if str(ma_type).upper() == "EMA" else sma
     df["fast"] = fn(df[["price"]], fast).squeeze()
@@ -370,8 +374,10 @@ def run_backtest(
         if regime_action == "Exit per Strategy" and regime_str == "BEAR":
             continue
 
-        # ── Rebalance
-        if dt in rdates:
+        # ── Rebalance (skip entirely in BEAR for non-scale modes)
+        _in_bear = (regime_str == "BEAR" and
+                    regime_action in ("Exit per Strategy", "Keep Stocks No Entry", "Exit All No Entry"))
+        if dt in rdates and not _in_bear:
             today_r  = ranks.loc[dt].dropna()
             eligible = fs.loc[dt].dropna().index.tolist()
             ranked   = today_r[today_r.index.isin(eligible)].sort_values().index.tolist()
