@@ -461,11 +461,13 @@ def run_backtest(
                     cp  = float(px[sym])
                     mv  = sh_cnt * cp
                     cv  = sh_cnt * epx.get(sym, cp)
+                    # cost_basis includes txn+slippage; unrealised is correct
                     snap_h[sym] = {
                         "shares":      round(sh_cnt, 4),
-                        "entry_price": round(epx.get(sym, cp), 2),
+                        "entry_price": round(epx.get(sym, cp), 2),  # full cost basis
                         "curr_price":  round(cp, 2),
                         "mkt_value":   round(mv, 2),
+                        "cost_value":  round(cv, 2),
                         "unrealised":  round(mv - cv, 2),
                         "weight_pct":  0,
                     }
@@ -474,9 +476,14 @@ def run_backtest(
                 snap_h[sym]["weight_pct"] = round(
                     snap_h[sym]["mkt_value"] / tot_mv * 100 if tot_mv else 0, 2)
 
+            # Post-trade portfolio value (cash + current market value of holdings)
+            post_trade_val = cash + sum(
+                holdings[s] * float(px[s]) for s in holdings
+                if s in px.index and not pd.isna(px[s])
+            )
             period_snapshots.append({
                 "date":          dt,
-                "portfolio_val": round(port_val, 2),
+                "portfolio_val": round(post_trade_val, 2),
                 "cash":          round(cash, 2),
                 "holdings":      snap_h,
                 "regime":        regime_str,
