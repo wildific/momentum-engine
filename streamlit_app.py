@@ -156,7 +156,8 @@ with st.sidebar:
     entry_fast = st.number_input("Fast MA period", 5,  500, 50,  5)
     entry_slow = st.number_input("Slow MA period", 10, 500, 200, 10)
     st.caption("Exit: price < MA(exit)")
-    exit_ma_p  = st.number_input("Exit MA period", 5, 500, 20, 5)
+    exit_ma_type = st.selectbox("Exit MA Type", ["EMA","SMA"], key="exit_ma_type_sel")
+    exit_ma_p    = st.number_input("Exit MA period", 5, 500, 20, 5)
     st.caption("Extra chart MAs (comma-separated)")
     extra_ma_raw = st.text_input("e.g. 20,50,200", value="20,50,200")
     st.markdown("---")
@@ -342,7 +343,8 @@ else:
     prog.progress(48,"Computing signals…")
     signals = generate_signals(prices, mom_w, entry_fast, entry_slow,
                                exit_ma_p, ma_type, top_n, ex_rank,
-                               rank_by=rank_by, rf=rf_rate)
+                               rank_by=rank_by, rf=rf_rate,
+                               exit_ma_type=exit_ma_type)
 
     # Map regime_action label to engine parameter
     ra_map = {
@@ -361,6 +363,7 @@ else:
         rebal_day=rebal_day,
         use_corr_filter=use_corr, corr_threshold=corr_thresh, corr_window=corr_window,
         regime_action=ra_map.get(regime_action,"Scale Exposure"),
+        universe=idx_info.get("components",[]) if not csv_prices else [],
     )
 
     prog.progress(82,f"Monte Carlo ({mc_n} sims)…")
@@ -430,7 +433,7 @@ st.markdown(f"""
   <span style="color:#30363D">|</span>
   <span>📈 Entry: <b style="color:#E6EDF3">price &gt; {ma_type}({entry_fast}) &gt; {ma_type}({entry_slow})</b></span>
   <span style="color:#30363D">|</span>
-  <span>📉 Exit: <b style="color:#E6EDF3">price &lt; {ma_type}({exit_ma_p})</b></span>
+  <span>📉 Exit: <b style="color:#E6EDF3">price &lt; {exit_ma_type}({exit_ma_p})</b></span>
   <span style="color:#30363D">|</span>
   <span>🏆 Rank: <b style="color:#E6EDF3">{rank_by}</b></span>
   <span style="color:#30363D">|</span>
@@ -461,7 +464,7 @@ with t1:
         sh("RISK & P&L")
         for k,pg in [("Annual Volatility (%)",False),("Max Drawdown (%)",False),
                      ("Sharpe Ratio",True),("Sortino Ratio",True),
-                     ("Realized P&L (₹)",True),("Total P&L (₹)",True),
+                     ("Realized P&L (₹)",True),("Unrealized P&L (₹)",True),("Total P&L (₹)",True),
                      ("Total Invested (₹)",True)]:
             mcard(k, fmt(m.get(k,0)), pg)
     st.markdown("---")
@@ -903,7 +906,7 @@ cfg_export = {
     "Index":idx_name,"Start":str(start_dt),"End":str(end_dt),
     "Rebalance":f"{rebal}{dl_label}","MA Type":ma_type,
     "Entry":f"price>{ma_type}({entry_fast}) AND {ma_type}({entry_fast})>{ma_type}({entry_slow})",
-    "Exit":f"price<{ma_type}({exit_ma_p})",
+    "Exit":f"price<{exit_ma_type}({exit_ma_p})",
     "Rank by":rank_by,"Top N":top_n,"Exit Rank":ex_rank,
     "Sizing":sizing,"Allocation":alloc_mode,
     "SIP Amt":f"₹{sip_amount:,}" if alloc_mode=="SIP" else "N/A",
