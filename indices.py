@@ -209,6 +209,15 @@ NSE_INDICES = {
             "MARUTI.NS","HEROMOTOCO.NS","BAJAJ-AUTO.NS","LT.NS","POWERGRID.NS",
         ],
     },
+    "All Asset ETF": {
+        "index_ticker": "^NSEI",   # Nifty 50 as benchmark proxy
+        "components": [
+            "GOLDBEES.NS",       # Nippon India Gold ETF
+            "SILVERBEES.NS",     # Nippon India Silver ETF
+            "NIFTYBEES.NS",      # Nippon India Nifty 50 ETF
+            "LTGILTBEES.NS",     # Nippon India ETF Long Term Gilt
+        ],
+    },
 }
 
 INDEX_CATEGORIES = {
@@ -221,4 +230,5 @@ INDEX_CATEGORIES = {
                             "Nifty Realty"],
     "Factor / Smart Beta": ["Nifty High Beta 50", "Nifty Alpha 50",
                             "Nifty Momentum 50", "Nifty Quality Low Vol 30"],
+    "ETF":                 ["All Asset ETF"],
 }
