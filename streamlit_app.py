@@ -10,7 +10,9 @@ from datetime import date, timedelta
 
 from indices import NSE_INDICES, INDEX_CATEGORIES
 from engine import (fetch_yahoo, fetch_index, parse_csv, ma,
-                    generate_signals, run_backtest, detect_regime, run_monte_carlo)
+                    generate_signals, run_backtest, detect_regime, run_monte_carlo,
+                    fetch_crypto_yahoo, fetch_coingecko, fetch_binance,
+                    is_crypto_ticker, COINGECKO_IDS)
 
 warnings.filterwarnings("ignore")
 
@@ -134,6 +136,20 @@ with st.sidebar:
     cat      = st.selectbox("Category", list(INDEX_CATEGORIES.keys()), label_visibility="collapsed")
     idx_name = st.selectbox("Index", INDEX_CATEGORIES[cat])
     idx_info = NSE_INDICES.get(idx_name, {})
+    # Crypto data source (shown only for Crypto category)
+    crypto_source = "Yahoo Finance"
+    if cat == "Crypto":
+        crypto_source = st.selectbox("Crypto Data Source", [
+            "Yahoo Finance",
+            "CoinGecko (free, slower)",
+            "Binance (USDT pairs)",
+        ], help="Yahoo Finance: easiest, covers major pairs\nCoinGecko: 10k+ coins, free API\nBinance: best OHLCV quality, USDT pairs only")
+
+        if crypto_source == "CoinGecko (free, slower)":
+            st.info("📡 CoinGecko: uses coin IDs (bitcoin, ethereum). Rate limit: 30 req/min — may be slow for large universes.")
+        elif crypto_source == "Binance (USDT pairs)":
+            st.info("📡 Binance: converts tickers to USDT pairs (BTC-USD → BTCUSDT). Fastest & most accurate.")
+
     csv_prices = st.file_uploader("📄 Upload Price CSV", type=["csv"])
     csv_index  = st.file_uploader("📄 Upload Index/Benchmark CSV", type=["csv"])
     if csv_prices: st.success("Price CSV ✓")
@@ -309,7 +325,42 @@ else:
         if not tickers:
             st.error("No pre-loaded components. Upload a Price CSV.")
             prog.empty(); st.stop()
-        prices = fetch_yahoo(tickers, str(start_dt), str(end_dt))
+
+        # Detect crypto universe
+        _is_crypto = (cat == "Crypto" or
+                      any(is_crypto_ticker(t) for t in tickers[:3]))
+
+        if _is_crypto:
+            if crypto_source == "CoinGecko (free, slower)":
+                # Convert tickers to CoinGecko IDs
+                coin_ids = []
+                for t in tickers:
+                    base = t.replace("-USD","").replace("-INR","").replace("-USDT","").upper()
+                    cg_id = COINGECKO_IDS.get(base, base.lower())
+                    coin_ids.append(cg_id)
+                vs_currency = "inr" if any("INR" in t for t in tickers) else "usd"
+                prices = fetch_coingecko(coin_ids, str(start_dt), str(end_dt), vs_currency)
+                # Rename columns back to original tickers
+                if not prices.empty:
+                    rename_map = {cg.upper(): tk for cg, tk in zip(coin_ids, tickers)}
+                    prices.columns = [rename_map.get(c, c) for c in prices.columns]
+
+            elif crypto_source == "Binance (USDT pairs)":
+                # Convert to USDT pairs: BTC-USD -> BTCUSDT
+                binance_syms = []
+                for t in tickers:
+                    base = t.replace("-USD","").replace("-INR","").replace("-USDT","").upper()
+                    binance_syms.append(f"{base}USDT")
+                prices = fetch_binance(binance_syms, str(start_dt), str(end_dt))
+                # Rename back to original tickers
+                if not prices.empty:
+                    rename_map = {b: t for b, t in zip(binance_syms, tickers)}
+                    prices.columns = [rename_map.get(c, c) for c in prices.columns]
+
+            else:  # Yahoo Finance for crypto
+                prices = fetch_crypto_yahoo(tickers, str(start_dt), str(end_dt))
+        else:
+            prices = fetch_yahoo(tickers, str(start_dt), str(end_dt))
 
     if prices.empty:
         st.error("No price data returned.")
@@ -366,7 +417,8 @@ else:
         rebal_day=rebal_day,
         use_corr_filter=use_corr, corr_threshold=corr_thresh, corr_window=corr_window,
         regime_action=ra_map.get(regime_action,"Scale Exposure"),
-        universe=idx_info.get("components",[]) if not csv_prices else [],
+        universe=(idx_info.get("components",[])
+                  if not csv_prices else []),
     )
 
     prog.progress(82,f"Monte Carlo ({mc_n} sims)…")
