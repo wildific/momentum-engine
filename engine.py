@@ -70,6 +70,139 @@ def parse_csv(uploaded):
 
 
 # ═══════════════════════════════════════════════════════════════
+# CRYPTO DATA FETCHERS
+# ═══════════════════════════════════════════════════════════════
+
+def is_crypto_ticker(ticker: str) -> bool:
+    """Detect crypto tickers — USD/INR pairs or CoinGecko IDs."""
+    t = str(ticker).upper()
+    return (t.endswith("-USD") or t.endswith("-INR") or
+            t.endswith("-USDT") or t.endswith("-BTC"))
+
+
+def fetch_coingecko(coin_ids: list, start: str, end: str,
+                    vs_currency: str = "usd") -> pd.DataFrame:
+    """
+    Fetch OHLCV from CoinGecko free API.
+    coin_ids: list of CoinGecko IDs e.g. ['bitcoin','ethereum','solana']
+    No API key needed for free tier (30 req/min).
+    """
+    import requests, time
+    from datetime import datetime
+
+    start_ts = int(pd.Timestamp(start).timestamp())
+    end_ts   = int(pd.Timestamp(end).timestamp())
+    frames   = {}
+
+    for coin in coin_ids:
+        try:
+            url = (f"https://api.coingecko.com/api/v3/coins/{coin}/market_chart/range"
+                   f"?vs_currency={vs_currency}&from={start_ts}&to={end_ts}")
+            r = requests.get(url, timeout=15,
+                             headers={"Accept": "application/json"})
+            if r.status_code == 429:
+                time.sleep(60); r = requests.get(url, timeout=15)
+            if r.status_code != 200:
+                warnings.warn(f"CoinGecko {coin}: HTTP {r.status_code}")
+                continue
+            prices_raw = r.json().get("prices", [])
+            s = pd.Series(
+                {pd.Timestamp(p[0], unit="ms"): p[1] for p in prices_raw}
+            )
+            s.name = coin.upper()
+            frames[coin.upper()] = s
+            time.sleep(1.5)  # respect rate limit
+        except Exception as e:
+            warnings.warn(f"CoinGecko {coin}: {e}")
+
+    if not frames:
+        return pd.DataFrame()
+    df = pd.DataFrame(frames).sort_index()
+    df = df.resample("D").last().dropna(how="all")  # daily close
+    return df
+
+
+def fetch_binance(symbols: list, start: str, end: str,
+                  interval: str = "1d") -> pd.DataFrame:
+    """
+    Fetch OHLCV from Binance public API (no API key required).
+    symbols: list of Binance pairs e.g. ['BTCUSDT','ETHUSDT','SOLUSDT']
+    """
+    import requests
+
+    start_ms = int(pd.Timestamp(start).timestamp() * 1000)
+    end_ms   = int(pd.Timestamp(end).timestamp() * 1000)
+    frames   = {}
+
+    for sym in symbols:
+        try:
+            url = "https://api.binance.com/api/v3/klines"
+            params = {
+                "symbol":    sym,
+                "interval":  interval,
+                "startTime": start_ms,
+                "endTime":   end_ms,
+                "limit":     1000,
+            }
+            r = requests.get(url, params=params, timeout=15)
+            if r.status_code != 200:
+                warnings.warn(f"Binance {sym}: HTTP {r.status_code}")
+                continue
+            data = r.json()
+            s = pd.Series(
+                {pd.Timestamp(d[0], unit="ms"): float(d[4]) for d in data}
+            )
+            s.name = sym
+            frames[sym] = s
+        except Exception as e:
+            warnings.warn(f"Binance {sym}: {e}")
+
+    if not frames:
+        return pd.DataFrame()
+    return pd.DataFrame(frames).sort_index().dropna(how="all")
+
+
+def fetch_crypto_yahoo(tickers: list, start: str, end: str) -> pd.DataFrame:
+    """
+    Fetch crypto via Yahoo Finance (BTC-USD, ETH-USD etc.)
+    Keeps the full ticker as column name (no .NS stripping).
+    """
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        raw = yf.download(tickers, start=start, end=end,
+                          auto_adjust=True, progress=False, threads=True)
+        if raw.empty:
+            return pd.DataFrame()
+        if isinstance(raw.columns, pd.MultiIndex):
+            close = raw["Close"]
+        else:
+            close = raw[["Close"]]
+            close.columns = [tickers[0]]
+        close.columns = [str(c) for c in close.columns]  # keep BTC-USD as-is
+        close.index = pd.to_datetime(close.index)
+        return close.sort_index().apply(pd.to_numeric, errors="coerce")
+    except Exception as e:
+        warnings.warn(f"crypto yahoo error: {e}")
+        return pd.DataFrame()
+
+
+# CoinGecko ID mapping for common tickers
+COINGECKO_IDS = {
+    "BTC": "bitcoin", "ETH": "ethereum", "BNB": "binancecoin",
+    "SOL": "solana", "XRP": "ripple", "ADA": "cardano",
+    "AVAX": "avalanche-2", "DOGE": "dogecoin", "DOT": "polkadot",
+    "MATIC": "matic-network", "LINK": "chainlink", "LTC": "litecoin",
+    "UNI": "uniswap", "ATOM": "cosmos", "XLM": "stellar",
+    "NEAR": "near", "APT": "aptos", "ICP": "internet-computer",
+    "FIL": "filecoin", "ARB": "arbitrum", "AAVE": "aave",
+    "MKR": "maker", "CRV": "curve-dao-token", "COMP": "compound-governance-token",
+    "SNX": "havven", "LDO": "lido-dao", "GMX": "gmx",
+    "DYDX": "dydx", "BAL": "balancer", "SUI": "sui",
+    "SEI": "sei-network", "INJ": "injective-protocol",
+}
+
+# ═══════════════════════════════════════════════════════════════
 # INDICATORS
 # ═══════════════════════════════════════════════════════════════
 
@@ -296,10 +429,15 @@ def run_backtest(
 ):
     prices = prices.sort_index().dropna(how="all", axis=1).dropna(how="all", axis=0)
 
-    # ── Strictly enforce universe (only index components) ─────
+    # ── Strictly enforce universe (handles .NS stocks AND crypto) ──
     if universe:
-        clean_uni = [s.replace(".NS", "") for s in universe]
-        allowed   = [c for c in prices.columns if c in clean_uni]
+        # Build lookup set: strip .NS for stocks, keep as-is for crypto
+        clean_uni = set()
+        for s in universe:
+            clean_uni.add(s.replace(".NS", ""))  # stock: RELIANCE
+            clean_uni.add(s)                      # crypto: BTC-USD or stock.NS
+        allowed = [c for c in prices.columns
+                   if c in clean_uni or c.replace(".NS","") in clean_uni]
         if allowed:
             prices = prices[allowed]
 
