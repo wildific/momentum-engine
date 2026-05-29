@@ -210,12 +210,56 @@ NSE_INDICES = {
         ],
     },
     "All Asset ETF": {
-        "index_ticker": "^NSEI",   # Nifty 50 as benchmark proxy
+        "index_ticker": "^NSEI",
         "components": [
-            "GOLDBEES.NS",       # Nippon India Gold ETF
-            "SILVERBEES.NS",     # Nippon India Silver ETF
-            "NIFTYBEES.NS",      # Nippon India Nifty 50 ETF
-            "LTGILTBEES.NS",     # Nippon India ETF Long Term Gilt
+            "GOLDBEES.NS","SILVERBEES.NS","NIFTYBEES.NS","LTGILTBEES.NS",
+        ],
+    },
+
+    # ── Crypto (Yahoo Finance tickers, USD pairs) ─────────────
+    "Crypto Top 10 (USD)": {
+        "index_ticker": "BTC-USD",   # Bitcoin as benchmark
+        "components": [
+            "BTC-USD",   # Bitcoin
+            "ETH-USD",   # Ethereum
+            "BNB-USD",   # BNB
+            "SOL-USD",   # Solana
+            "XRP-USD",   # XRP
+            "ADA-USD",   # Cardano
+            "AVAX-USD",  # Avalanche
+            "DOGE-USD",  # Dogecoin
+            "DOT-USD",   # Polkadot
+            "MATIC-USD", # Polygon
+        ],
+    },
+    "Crypto Large Cap (USD)": {
+        "index_ticker": "BTC-USD",
+        "components": [
+            "BTC-USD","ETH-USD","BNB-USD","SOL-USD","XRP-USD",
+            "ADA-USD","AVAX-USD","DOGE-USD","DOT-USD","MATIC-USD",
+            "LINK-USD","LTC-USD","UNI-USD","ATOM-USD","XLM-USD",
+            "NEAR-USD","APT-USD","ICP-USD","FIL-USD","ARB-USD",
+        ],
+    },
+    "Crypto DeFi (USD)": {
+        "index_ticker": "ETH-USD",
+        "components": [
+            "UNI-USD","AAVE-USD","MKR-USD","CRV-USD","COMP-USD",
+            "SNX-USD","LDO-USD","GMX-USD","DYDX-USD","BAL-USD",
+        ],
+    },
+    "Crypto L1L2 (USD)": {
+        "index_ticker": "BTC-USD",
+        "components": [
+            "ETH-USD","SOL-USD","ADA-USD","AVAX-USD","DOT-USD",
+            "NEAR-USD","APT-USD","SUI-USD","SEI-USD","INJ-USD",
+        ],
+    },
+    "Crypto INR Pairs": {
+        "index_ticker": "BTC-INR",
+        "components": [
+            "BTC-INR","ETH-INR","BNB-INR","SOL-INR","XRP-INR",
+            "ADA-INR","DOGE-INR","AVAX-INR","DOT-INR","MATIC-INR",
         ],
     },
 }
@@ -231,4 +275,7 @@ INDEX_CATEGORIES = {
     "Factor / Smart Beta": ["Nifty High Beta 50", "Nifty Alpha 50",
                             "Nifty Momentum 50", "Nifty Quality Low Vol 30"],
     "ETF":                 ["All Asset ETF"],
+    "Crypto":              ["Crypto Top 10 (USD)", "Crypto Large Cap (USD)",
+                            "Crypto DeFi (USD)", "Crypto L1L2 (USD)",
+                            "Crypto INR Pairs"],
 }
