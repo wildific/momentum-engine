@@ -12,7 +12,8 @@ from indices import NSE_INDICES, INDEX_CATEGORIES
 from engine import (fetch_yahoo, fetch_index, parse_csv, ma,
                     generate_signals, run_backtest, detect_regime, run_monte_carlo,
                     fetch_crypto_yahoo, fetch_coingecko, fetch_binance,
-                    is_crypto_ticker, COINGECKO_IDS)
+                    is_crypto_ticker, COINGECKO_IDS,
+                    fetch_ohlcv, run_turtle_backtest, turtle_signals, compute_atr)
 
 warnings.filterwarnings("ignore")
 
@@ -132,6 +133,12 @@ with st.sidebar:
     st.caption("v4 — NSE Momentum Backtester")
     st.markdown("---")
 
+    sh("Strategy Type")
+    strategy_type = st.selectbox("Strategy",
+        ["Momentum", "Turtle Trading"],
+        help="Momentum: MA crossover + rank-based entry\nTurtle Trading: Donchian breakout + ATR position sizing")
+    st.markdown("---")
+
     sh("Universe")
     cat      = st.selectbox("Category", list(INDEX_CATEGORIES.keys()), label_visibility="collapsed")
     idx_name = st.selectbox("Index", INDEX_CATEGORIES[cat])
@@ -234,6 +241,34 @@ with st.sidebar:
     mc_method = st.selectbox("Method", ["Bootstrap","Parametric","Trade Shuffle"])
     mc_n      = st.select_slider("Simulations", [200,500,1000,2000,5000], value=1000)
     st.markdown("---")
+
+    # ── Turtle Parameters (shown only when Turtle selected) ───
+    turtle_system     = 1
+    turtle_atr_window = 20
+    turtle_risk_pct   = 1.0
+    turtle_stop_mult  = 2.0
+    turtle_max_units  = 4
+    turtle_pyramid    = True
+    turtle_pyr_step   = 0.5
+    turtle_trail_win  = None
+
+    if strategy_type == "Turtle Trading":
+        sh("Turtle Trading Parameters")
+        turtle_system = st.selectbox("System",
+            [1, 2],
+            format_func=lambda x: f"System {x} — {'20' if x==1 else '55'}-day breakout",
+            help="System 1: 20-day breakout (more trades)\nSystem 2: 55-day breakout (longer trends)")
+        turtle_atr_window = st.number_input("ATR Window (days)", 5, 50, 20, 5)
+        turtle_risk_pct   = st.slider("Risk per unit (% of equity)", 0.25, 3.0, 1.0, 0.25) / 100
+        turtle_stop_mult  = st.slider("Stop loss (× ATR)", 0.5, 5.0, 2.0, 0.5)
+        turtle_pyramid    = st.toggle("Enable Pyramiding", value=True)
+        if turtle_pyramid:
+            turtle_max_units = st.slider("Max units per market", 1, 6, 4)
+            turtle_pyr_step  = st.slider("Pyramid step (× ATR)", 0.25, 1.0, 0.5, 0.25)
+        trail_label = "10" if turtle_system == 1 else "20"
+        st.caption(f"Trailing exit: {trail_label}-day lowest low (auto)")
+        st.markdown("---")
+
     run_btn = st.button("▶  RUN BACKTEST", use_container_width=True)
 
 
@@ -394,12 +429,6 @@ else:
         prog.progress(38,"Detecting regime…")
         regime_df = detect_regime(benchmark, reg_fast, reg_slow, reg_ma_type, vol_thresh=vol_thresh)
 
-    prog.progress(48,"Computing signals…")
-    signals = generate_signals(prices, mom_w, entry_fast, entry_slow,
-                               exit_ma_p, ma_type, top_n, ex_rank,
-                               rank_by=rank_by, rf=rf_rate,
-                               exit_ma_type=exit_ma_type)
-
     # Map regime_action label to engine parameter
     ra_map = {
         "Scale Exposure":               "Scale Exposure",
@@ -408,18 +437,50 @@ else:
         "Exit All, No New Entry":       "Exit All No Entry",
     }
 
-    prog.progress(62,"Running backtest…")
-    results = run_backtest(
-        prices, signals, benchmark, regime_df,
-        float(capital), rebal, top_n, ex_rank,
-        txn, slip, sizing, rf_rate,
-        allocation_mode=alloc_mode, sip_amount=float(sip_amount),
-        rebal_day=rebal_day,
-        use_corr_filter=use_corr, corr_threshold=corr_thresh, corr_window=corr_window,
-        regime_action=ra_map.get(regime_action,"Scale Exposure"),
-        universe=(idx_info.get("components",[])
-                  if not csv_prices else []),
-    )
+    if strategy_type == "Turtle Trading":
+        prog.progress(48,"Fetching OHLCV for Turtle…")
+        ohlcv_dict = fetch_ohlcv(tickers, str(start_dt), str(end_dt))
+        if not ohlcv_dict:
+            st.error("No OHLCV data returned. Try Yahoo Finance or a wider date range.")
+            prog.empty(); st.stop()
+
+        prog.progress(62,"Running Turtle backtest…")
+        results = run_turtle_backtest(
+            ohlcv_dict, benchmark,
+            capital=float(capital),
+            system=turtle_system,
+            atr_window=turtle_atr_window,
+            risk_pct=turtle_risk_pct,
+            stop_atr_mult=turtle_stop_mult,
+            max_units_per_market=turtle_max_units if turtle_pyramid else 1,
+            pyramid_atr_step=turtle_pyr_step,
+            allow_pyramid=turtle_pyramid,
+            txn=txn, slip=slip, rf=rf_rate,
+            universe=idx_info.get("components",[]) if not csv_prices else None,
+        )
+        # Prices for charting
+        prices   = pd.DataFrame({s: df["close"] for s, df in ohlcv_dict.items()})
+        signals  = results.get("turtle_signals", {})
+
+    else:
+        prog.progress(48,"Computing signals…")
+        signals = generate_signals(prices, mom_w, entry_fast, entry_slow,
+                                   exit_ma_p, ma_type, top_n, ex_rank,
+                                   rank_by=rank_by, rf=rf_rate,
+                                   exit_ma_type=exit_ma_type)
+
+        prog.progress(62,"Running backtest…")
+        results = run_backtest(
+            prices, signals, benchmark, regime_df,
+            float(capital), rebal, top_n, ex_rank,
+            txn, slip, sizing, rf_rate,
+            allocation_mode=alloc_mode, sip_amount=float(sip_amount),
+            rebal_day=rebal_day,
+            use_corr_filter=use_corr, corr_threshold=corr_thresh, corr_window=corr_window,
+            regime_action=ra_map.get(regime_action,"Scale Exposure"),
+            universe=(idx_info.get("components",[])
+                      if not csv_prices else []),
+        )
 
     prog.progress(82,f"Monte Carlo ({mc_n} sims)…")
     mc = run_monte_carlo(results["equity"], results["trades"],
@@ -705,6 +766,40 @@ with t7:
         st.info("No trades. Try reducing MA periods (e.g. fast=50, slow=200).")
 
 
+# ── TURTLE SIGNALS CHART (shown only in Turtle mode) ─────────
+if strategy_type == "Turtle Trading" and signals:
+    with t2:  # inject into Equity tab
+        st.markdown("---")
+        sh("📊 DONCHIAN CHANNEL — SELECT SYMBOL")
+        turtle_sym = st.selectbox("Symbol", list(signals.keys()), key="turtle_sym_sel")
+        if turtle_sym and turtle_sym in signals:
+            sig_df = signals[turtle_sym]
+            fig_t = go.Figure()
+            fig_t.add_trace(go.Scatter(x=sig_df.index, y=sig_df["close"],
+                name="Price", line=dict(color="#00D4AA", width=1.5)))
+            fig_t.add_trace(go.Scatter(x=sig_df.index, y=sig_df["don_high"],
+                name=f"Entry ({20 if turtle_system==1 else 55}d high)",
+                line=dict(color="#3FB950", width=1, dash="dot")))
+            fig_t.add_trace(go.Scatter(x=sig_df.index, y=sig_df["don_trail"],
+                name=f"Trail exit ({10 if turtle_system==1 else 20}d low)",
+                line=dict(color="#F85149", width=1, dash="dot")))
+            # Mark entries
+            entries = sig_df[sig_df["entry_signal"]]
+            if not entries.empty:
+                fig_t.add_trace(go.Scatter(x=entries.index, y=entries["close"],
+                    mode="markers", name="Entry signal",
+                    marker=dict(color="#3FB950", size=8, symbol="triangle-up")))
+            fig_t.update_layout(title=f"Donchian Channel — {turtle_sym}",
+                yaxis_title="Price", height=400, **PLOT)
+            st.plotly_chart(fig_t, use_container_width=True)
+
+            # ATR chart
+            fig_atr = go.Figure(go.Scatter(x=sig_df.index, y=sig_df["atr"],
+                line=dict(color="#D29922", width=1.5), name="ATR"))
+            fig_atr.update_layout(title="ATR (Volatility)", height=220,
+                yaxis_title="ATR", **PLOT)
+            st.plotly_chart(fig_atr, use_container_width=True)
+
 # ── PORTFOLIO ─────────────────────────────────────────────────
 with t8:
     sh("CURRENT HOLDINGS")
@@ -732,23 +827,44 @@ with t8:
         st.info("No holdings at end of backtest.")
 
     st.markdown("---")
-    sh("⚡ LIVE MOMENTUM SCANNER")
-    ls=signals["filtered"].iloc[-1].dropna().sort_values(ascending=False)
-    lr=signals["ranks"].iloc[-1].dropna().sort_values()
-    le=signals["entry_filter"].iloc[-1]
-    lx=signals["exit"].iloc[-1]
-    if ls.empty:
-        st.warning("No stocks pass entry filter. Try smaller MA periods.")
+    sh("⚡ LIVE SCANNER")
+    if strategy_type == "Turtle Trading":
+        # Turtle scanner — show current breakout status
+        if isinstance(signals, dict) and signals:
+            scan_rows = []
+            last_dt = prices.index[-1] if not prices.empty else None
+            for sym, sig_df in signals.items():
+                if sig_df.empty or last_dt not in sig_df.index:
+                    continue
+                row = sig_df.loc[last_dt]
+                scan_rows.append({
+                    "Symbol":     sym,
+                    "Price":      round(float(row["close"]),2),
+                    "ATR":        round(float(row["atr"]),2) if not pd.isna(row["atr"]) else 0,
+                    "Entry Level":round(float(row["don_high"]),2) if not pd.isna(row["don_high"]) else 0,
+                    "Trail Stop": round(float(row["don_trail"]),2) if not pd.isna(row["don_trail"]) else 0,
+                    "Signal":     "🟢 BUY" if row["entry_signal"] else ("🔴 EXIT" if row["exit_trail"] else "⏳ HOLD"),
+                })
+            if scan_rows:
+                df_ts = pd.DataFrame(scan_rows).sort_values("Signal")
+                st.dataframe(df_ts, use_container_width=True, height=380)
     else:
-        df_scan=pd.DataFrame({
-            "Rank":     lr.reindex(ls.index).fillna(999).astype(int).values,
-            "Symbol":   ls.index,
-            "Score":    ls.values.round(4),
-            "Entry":    le.reindex(ls.index).map({True:"✅",False:"❌"}).fillna("❌").values,
-            "Exit":     lx.reindex(ls.index).map({True:"🚪",False:"—"}).fillna("—").values,
-            "Status":   ["⭐ HOLD" if i<top_n else "" for i in range(len(ls))],
-        }).head(30)
-        st.dataframe(df_scan.set_index("Rank"), use_container_width=True, height=380)
+        ls=signals["filtered"].iloc[-1].dropna().sort_values(ascending=False)
+        lr=signals["ranks"].iloc[-1].dropna().sort_values()
+        le=signals["entry_filter"].iloc[-1]
+        lx=signals["exit"].iloc[-1]
+        if ls.empty:
+            st.warning("No stocks pass entry filter. Try smaller MA periods.")
+        else:
+            df_scan=pd.DataFrame({
+                "Rank":     lr.reindex(ls.index).fillna(999).astype(int).values,
+                "Symbol":   ls.index,
+                "Score":    ls.values.round(4),
+                "Entry":    le.reindex(ls.index).map({True:"✅",False:"❌"}).fillna("❌").values,
+                "Exit":     lx.reindex(ls.index).map({True:"🚪",False:"—"}).fillna("—").values,
+                "Status":   ["⭐ HOLD" if i<top_n else "" for i in range(len(ls))],
+            }).head(30)
+            st.dataframe(df_scan.set_index("Rank"), use_container_width=True, height=380)
     st.caption(f"As of {prices.index[-1].date()} · {len(prices.columns)} stocks")
 
 
