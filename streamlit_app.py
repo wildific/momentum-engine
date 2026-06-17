@@ -437,12 +437,12 @@ else:
         prog.progress(38,"Detecting regime…")
         regime_df = detect_regime(benchmark, reg_fast, reg_slow, reg_ma_type, vol_thresh=vol_thresh)
 
-    # Map regime_action label to engine parameter
+    # Map regime_action label to engine parameter (used by both strategies)
     ra_map = {
-        "Scale Exposure":               "Scale Exposure",
+        "Scale Exposure":                  "Scale Exposure",
         "Exit per Strategy, No New Entry": "Exit per Strategy",
-        "Keep Stocks, No New Entry":    "Keep Stocks No Entry",
-        "Exit All, No New Entry":       "Exit All No Entry",
+        "Keep Stocks, No New Entry":       "Keep Stocks No Entry",
+        "Exit All, No New Entry":          "Exit All No Entry",
     }
 
     if strategy_type == "Turtle Trading":
