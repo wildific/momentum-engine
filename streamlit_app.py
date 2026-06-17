@@ -73,6 +73,14 @@ def fmt(v, d=2, pre="", suf=""):
     try: return f"{pre}{float(v):,.{d}f}{suf}"
     except: return str(v)
 
+# Always-available ra_map (also redefined inside run block for clarity)
+ra_map = {
+    "Scale Exposure":                  "Scale Exposure",
+    "Exit per Strategy, No New Entry": "Exit per Strategy",
+    "Keep Stocks, No New Entry":       "Keep Stocks No Entry",
+    "Exit All, No New Entry":          "Exit All No Entry",
+}
+
 
 # ── EXCEL ─────────────────────────────────────────────────────
 def build_excel(results, cfg):
