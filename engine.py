@@ -813,3 +813,332 @@ def run_monte_carlo(equity, trades=None, n_sim=1000, method="Bootstrap",
             "Worst-case Drawdown (%)":   round(float(dd.min()),2),
         },
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# OHLCV FETCHER  (needed for Turtle — ATR requires H/L/C)
+# ═══════════════════════════════════════════════════════════════
+
+def fetch_ohlcv(tickers, start, end):
+    """
+    Fetch full OHLCV for a list of tickers.
+    Returns dict: { symbol: DataFrame(open,high,low,close,volume) }
+    """
+    if not tickers:
+        return {}
+    try:
+        raw = yf.download(tickers, start=start, end=end,
+                          auto_adjust=True, progress=False, threads=True)
+        if raw.empty:
+            return {}
+
+        result = {}
+        syms = tickers if isinstance(tickers, list) else [tickers]
+
+        for ticker in syms:
+            sym = str(ticker).replace(".NS", "")
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    df = pd.DataFrame({
+                        "open":   raw["Open"][ticker].values,
+                        "high":   raw["High"][ticker].values,
+                        "low":    raw["Low"][ticker].values,
+                        "close":  raw["Close"][ticker].values,
+                        "volume": raw["Volume"][ticker].values,
+                    }, index=raw.index)
+                else:
+                    df = raw[["Open","High","Low","Close","Volume"]].copy()
+                    df.columns = ["open","high","low","close","volume"]
+
+                df = df.apply(pd.to_numeric, errors="coerce").dropna(how="all")
+                df.index = pd.to_datetime(df.index)
+                result[sym] = df.sort_index()
+            except Exception:
+                pass
+        return result
+    except Exception as e:
+        warnings.warn(f"fetch_ohlcv error: {e}")
+        return {}
+
+
+# ═══════════════════════════════════════════════════════════════
+# TURTLE TRADING ENGINE
+# ═══════════════════════════════════════════════════════════════
+
+def compute_atr(df, window=20):
+    """
+    True Range and ATR (Wilder's smoothing = EMA with alpha=1/N).
+    df must have columns: high, low, close
+    """
+    high  = df["high"]
+    low   = df["low"]
+    prev_close = df["close"].shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low  - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    # Wilder smoothing
+    atr = tr.ewm(alpha=1/window, adjust=False, min_periods=window).mean()
+    return tr, atr
+
+
+def turtle_signals(
+    ohlcv_dict: dict,
+    system: int = 1,           # 1 = 20-day breakout, 2 = 55-day breakout
+    atr_window: int = 20,
+    stop_atr_mult: float = 2.0,
+    trailing_window: int = None,  # None = auto (10 for S1, 20 for S2)
+):
+    """
+    Generate Turtle entry/exit signals for all symbols.
+    Returns dict of DataFrames per symbol with columns:
+      entry_signal, exit_trailing, stop_price, atr, donchian_high, donchian_low
+    """
+    breakout_period  = 20 if system == 1 else 55
+    if trailing_window is None:
+        trailing_window = 10 if system == 1 else 20
+
+    signals = {}
+    for sym, df in ohlcv_dict.items():
+        if df.empty or len(df) < breakout_period + atr_window:
+            continue
+
+        _, atr = compute_atr(df, atr_window)
+
+        # Donchian channels
+        don_high = df["high"].rolling(breakout_period).max().shift(1)  # previous N-day high
+        don_low  = df["low"].rolling(trailing_window).min().shift(1)   # trailing exit
+
+        # Entry: close breaks above N-day high
+        entry_signal = df["close"] > don_high
+
+        # Exit: close breaks below trailing low (or stop hit)
+        # Stop = entry price - stop_atr_mult * ATR (tracked dynamically in backtest)
+        exit_trailing = df["close"] < don_low
+
+        signals[sym] = pd.DataFrame({
+            "close":        df["close"],
+            "high":         df["high"],
+            "low":          df["low"],
+            "atr":          atr,
+            "don_high":     don_high,
+            "don_trail":    don_low,
+            "entry_signal": entry_signal.fillna(False),
+            "exit_trail":   exit_trailing.fillna(False),
+        })
+
+    return signals
+
+
+def run_turtle_backtest(
+    ohlcv_dict: dict,
+    benchmark: pd.Series,
+    capital: float = 1_000_000,
+    system: int = 1,
+    atr_window: int = 20,
+    risk_pct: float = 0.01,         # 1% of equity per ATR unit
+    stop_atr_mult: float = 2.0,     # stop = entry - N * ATR
+    max_units_per_market: int = 4,  # pyramid limit
+    pyramid_atr_step: float = 0.5,  # add unit every 0.5N move
+    allow_pyramid: bool = True,
+    txn: float = 0.001,
+    slip: float = 0.001,
+    rf: float = 0.065,
+    universe: list = None,
+    trailing_window: int = None,
+) -> dict:
+    """
+    Full Turtle Trading backtest.
+    Position size = (equity * risk_pct) / (ATR * price) — ATR-normalised units.
+    """
+    # Filter universe
+    if universe:
+        clean_uni = {s.replace(".NS","") for s in universe}
+        ohlcv_dict = {s: df for s, df in ohlcv_dict.items()
+                      if s in clean_uni or s.replace(".NS","") in clean_uni}
+
+    if not ohlcv_dict:
+        return {}
+
+    # Build signals
+    sigs = turtle_signals(ohlcv_dict, system, atr_window, stop_atr_mult, trailing_window)
+
+    # Align all dates
+    all_dates = sorted(set.union(*[set(df.index) for df in sigs.values()]))
+    all_dates = pd.DatetimeIndex(all_dates)
+
+    # State per symbol
+    # positions[sym] = list of {"shares", "entry_px", "stop", "units", "last_add_px"}
+    positions = {sym: [] for sym in sigs}
+    cash = float(capital)
+    eq_rows, tr_rows = [], []
+
+    for dt in all_dates:
+        # ── Mark to market
+        port_val = cash
+        for sym, pos_list in positions.items():
+            if not pos_list:
+                continue
+            sig_df = sigs[sym]
+            if dt not in sig_df.index:
+                continue
+            curr_px = float(sig_df.loc[dt, "close"])
+            for pos in pos_list:
+                port_val += pos["shares"] * curr_px
+        eq_rows.append({"date": dt, "value": port_val})
+
+        # ── Check exits first
+        for sym in list(positions):
+            if not positions[sym]:
+                continue
+            sig_df = sigs[sym]
+            if dt not in sig_df.index:
+                continue
+            row     = sig_df.loc[dt]
+            curr_px = float(row["close"])
+            trail_exit  = bool(row["exit_trail"])
+
+            # Check stop or trailing exit
+            to_close = False
+            for pos in positions[sym]:
+                if curr_px <= pos["stop"]:   # stop hit
+                    to_close = True; break
+            if trail_exit:
+                to_close = True
+
+            if to_close:
+                for pos in positions[sym]:
+                    sell_px  = curr_px * (1 - slip)
+                    proceeds = pos["shares"] * sell_px * (1 - txn)
+                    pnl      = proceeds - pos["shares"] * pos["entry_px"]
+                    cash    += proceeds
+                    tr_rows.append({
+                        "date": dt, "action": "SELL", "symbol": sym,
+                        "price": round(sell_px, 2),
+                        "shares": round(pos["shares"], 4),
+                        "value": round(proceeds, 2),
+                        "pnl": round(pnl, 2),
+                        "held_days": (dt - pos["entry_dt"]).days,
+                        "reason": "stop" if curr_px <= pos["stop"] else "trail",
+                    })
+                positions[sym] = []
+
+        # ── Check entries & pyramiding
+        for sym, sig_df in sigs.items():
+            if dt not in sig_df.index:
+                continue
+            row    = sig_df.loc[dt]
+            atr_val = float(row["atr"]) if not pd.isna(row["atr"]) else 0
+            if atr_val <= 0:
+                continue
+
+            curr_px = float(row["close"])
+            entry_signal = bool(row["entry_signal"])
+            n_units = len(positions[sym])
+
+            # New entry
+            if entry_signal and n_units == 0:
+                unit_size = (port_val * risk_pct) / atr_val if atr_val > 0 else 0
+                shares    = unit_size / curr_px if curr_px > 0 else 0
+                cost      = shares * curr_px * (1 + slip) * (1 + txn)
+                if shares > 0 and cost <= cash:
+                    stop_px = curr_px - stop_atr_mult * atr_val
+                    cash   -= cost
+                    positions[sym].append({
+                        "shares":      shares,
+                        "entry_px":    curr_px * (1 + slip),
+                        "stop":        stop_px,
+                        "entry_dt":    dt,
+                        "last_add_px": curr_px,
+                    })
+                    tr_rows.append({
+                        "date": dt, "action": "BUY", "symbol": sym,
+                        "price": round(curr_px*(1+slip), 2),
+                        "shares": round(shares, 4),
+                        "value": round(cost, 2),
+                        "pnl": 0, "held_days": 0, "reason": "entry",
+                    })
+
+            # Pyramid: add unit every 0.5×ATR above last add price
+            elif (allow_pyramid and n_units > 0
+                  and n_units < max_units_per_market):
+                last_add  = positions[sym][-1]["last_add_px"]
+                if curr_px >= last_add + pyramid_atr_step * atr_val:
+                    unit_size = (port_val * risk_pct) / atr_val if atr_val > 0 else 0
+                    shares    = unit_size / curr_px if curr_px > 0 else 0
+                    cost      = shares * curr_px * (1 + slip) * (1 + txn)
+                    if shares > 0 and cost <= cash:
+                        new_stop = curr_px - stop_atr_mult * atr_val
+                        # Raise all prior stops
+                        for pos in positions[sym]:
+                            pos["stop"] = max(pos["stop"], new_stop)
+                        cash -= cost
+                        positions[sym].append({
+                            "shares":      shares,
+                            "entry_px":    curr_px * (1 + slip),
+                            "stop":        new_stop,
+                            "entry_dt":    dt,
+                            "last_add_px": curr_px,
+                        })
+                        tr_rows.append({
+                            "date": dt, "action": "ADD", "symbol": sym,
+                            "price": round(curr_px*(1+slip), 2),
+                            "shares": round(shares, 4),
+                            "value": round(cost, 2),
+                            "pnl": 0, "held_days": 0, "reason": f"pyramid_u{n_units+1}",
+                        })
+
+    equity = pd.DataFrame(eq_rows).set_index("date")["value"]
+    trades = pd.DataFrame(tr_rows) if tr_rows else pd.DataFrame()
+
+    bm = benchmark.reindex(equity.index).ffill()
+    bm_curve = (bm / bm.iloc[0] * capital
+                if not bm.empty and bm.iloc[0] != 0
+                else pd.Series(dtype=float))
+
+    bm_cagr = 0.0
+    for bm_s in [bm.dropna(), bm_curve.dropna()]:
+        if len(bm_s) > 5 and bm_s.iloc[0] != 0:
+            nyrs = (bm_s.index[-1] - bm_s.index[0]).days / 365.25
+            bm_cagr = ((bm_s.iloc[-1] / bm_s.iloc[0]) ** (1 / max(nyrs, 0.01)) - 1) * 100
+            if bm_cagr != 0:
+                break
+
+    # Final open position values
+    final_holdings = {}
+    final_px_map = {}
+    for sym, pos_list in positions.items():
+        if pos_list:
+            sig_df = sigs[sym]
+            last_px = float(sig_df["close"].iloc[-1]) if not sig_df.empty else 0
+            total_sh = sum(p["shares"] for p in pos_list)
+            final_holdings[sym] = total_sh
+            final_px_map[sym]   = last_px
+
+    metrics = compute_metrics(equity, bm, trades, rf, capital)
+    metrics["Index CAGR (%)"] = round(bm_cagr, 2)
+
+    # P&L reconciliation
+    sells = trades[trades["action"].isin(["SELL"])]["pnl"] if not trades.empty and "action" in trades.columns else pd.Series()
+    realized   = float(sells.sum()) if not sells.empty else 0.0
+    unrealized = sum(
+        final_holdings[s] * final_px_map[s] -
+        sum(p["shares"] * p["entry_px"] for p in positions[s])
+        for s in final_holdings
+    )
+    metrics["Realized P&L (₹)"]   = round(realized, 0)
+    metrics["Unrealized P&L (₹)"] = round(unrealized, 0)
+    metrics["Total P&L (₹)"]      = round(realized + unrealized, 0)
+
+    return {
+        "equity":          equity,
+        "benchmark":       bm_curve,
+        "trades":          trades,
+        "metrics":         metrics,
+        "final_holdings":  final_holdings,
+        "final_prices":    pd.Series(final_px_map),
+        "turtle_signals":  sigs,
+        "total_invested":  capital,
+        "period_snapshots": [],   # turtle doesn't use period snapshots
+    }
