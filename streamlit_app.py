@@ -173,46 +173,54 @@ with st.sidebar:
         rebal_day = st.selectbox("Rebalance Day", ["Monday","Tuesday","Wednesday","Thursday","Friday"], index=4)
     st.markdown("---")
 
+    _is_turtle = (strategy_type == "Turtle Trading")
+
     sh("Moving Averages")
-    ma_type    = st.selectbox("MA Type", ["EMA","SMA"])
+    if _is_turtle:
+        st.caption("⚠️ Not used in Turtle Trading — entry/exit based on Donchian breakout")
+    ma_type    = st.selectbox("MA Type", ["EMA","SMA"], disabled=_is_turtle)
     st.caption("Entry: price > MA(fast) AND MA(fast) > MA(slow)")
-    entry_fast = st.number_input("Fast MA period", 5,  500, 50,  5)
-    entry_slow = st.number_input("Slow MA period", 10, 500, 200, 10)
+    entry_fast = st.number_input("Fast MA period", 5,  500, 50,  5, disabled=_is_turtle)
+    entry_slow = st.number_input("Slow MA period", 10, 500, 200, 10, disabled=_is_turtle)
     st.caption("Exit: price < MA(exit)")
-    exit_ma_type = st.selectbox("Exit MA Type", ["EMA","SMA"], key="exit_ma_type_sel")
-    exit_ma_p    = st.number_input("Exit MA period", 5, 500, 20, 5)
+    exit_ma_type = st.selectbox("Exit MA Type", ["EMA","SMA"], key="exit_ma_type_sel", disabled=_is_turtle)
+    exit_ma_p    = st.number_input("Exit MA period", 5, 500, 20, 5, disabled=_is_turtle)
     st.caption("Extra chart MAs (comma-separated)")
-    extra_ma_raw = st.text_input("e.g. 20,50,200", value="20,50,200")
+    extra_ma_raw = st.text_input("e.g. 20,50,200", value="20,50,200", disabled=_is_turtle)
     st.markdown("---")
 
     sh("Ranking Criteria")
-    rank_by = st.selectbox("Rank by", ["Momentum","Sharpe Ratio","Return %","Low Volatility"])
-    lb_opts = st.multiselect("Lookback days", [21,30,60,90,120,180,252], default=[60,90,120,252])
+    if _is_turtle:
+        st.caption("⚠️ Not used in Turtle Trading — position sized by ATR")
+    rank_by = st.selectbox("Rank by", ["Momentum","Sharpe Ratio","Return %","Low Volatility"], disabled=_is_turtle)
+    lb_opts = st.multiselect("Lookback days", [21,30,60,90,120,180,252], default=[60,90,120,252], disabled=_is_turtle)
     if not lb_opts: lb_opts = [60,90,120,252]
     wcols = st.columns(min(len(lb_opts),4))
     raw_w = {}
     for i,lb in enumerate(lb_opts):
         with wcols[i%4]:
-            raw_w[lb] = st.number_input(f"{lb}d",0.0,1.0,round(1/len(lb_opts),2),0.05,key=f"w{lb}")
+            raw_w[lb] = st.number_input(f"{lb}d",0.0,1.0,round(1/len(lb_opts),2),0.05,key=f"w{lb}", disabled=_is_turtle)
     tw = sum(raw_w.values()) or 1
     mom_w = {k: v/tw for k,v in raw_w.items()}
     st.markdown("---")
 
     sh("Correlation Filter")
-    use_corr     = st.toggle("Filter correlated stocks", value=False)
-    corr_thresh  = st.slider("Max correlation threshold", 0.1, 1.0, 0.7, 0.05, disabled=not use_corr)
-    corr_window  = st.slider("Correlation lookback (days)", 20, 120, 60, 10, disabled=not use_corr)
+    use_corr     = st.toggle("Filter correlated stocks", value=False, disabled=_is_turtle)
+    corr_thresh  = st.slider("Max correlation threshold", 0.1, 1.0, 0.7, 0.05, disabled=not use_corr or _is_turtle)
+    corr_window  = st.slider("Correlation lookback (days)", 20, 120, 60, 10, disabled=not use_corr or _is_turtle)
     st.markdown("---")
 
     sh("Portfolio & Allocation")
-    top_n      = st.slider("Stocks to hold", 1, 40, 10)
-    ex_rank    = st.slider("Exit rank threshold", top_n, 60, min(top_n*2,20))
+    if _is_turtle:
+        st.caption("⚠️ Position sizing handled by ATR risk % above")
+    top_n      = st.slider("Stocks to hold", 1, 40, 10, disabled=_is_turtle)
+    ex_rank    = st.slider("Exit rank threshold", top_n, 60, min(top_n*2,20), disabled=_is_turtle)
     capital    = st.number_input("Initial Portfolio (₹)", value=1_000_000, step=100_000, format="%d")
-    alloc_mode = st.selectbox("Allocation Mode", ["Reinvestment","SIP","Fixed"])
+    alloc_mode = st.selectbox("Allocation Mode", ["Reinvestment","SIP","Fixed"], disabled=_is_turtle)
     sip_amount = 0
-    if alloc_mode == "SIP":
+    if alloc_mode == "SIP" and not _is_turtle:
         sip_amount = st.number_input("SIP Amount/period (₹)", value=50_000, step=10_000, format="%d")
-    sizing  = st.selectbox("Position Sizing", ["Equal Weight","Inverse Volatility"])
+    sizing  = st.selectbox("Position Sizing", ["Equal Weight","Inverse Volatility"], disabled=_is_turtle)
     txn     = st.slider("Transaction Cost (%)", 0.0, 1.0, 0.1) / 100
     slip    = st.slider("Slippage (%)", 0.0, 1.0, 0.1) / 100
     rf_rate = st.slider("Risk-Free Rate (%)", 0.0, 10.0, 6.5) / 100
@@ -926,154 +934,242 @@ with t9:
 
 # ── SIMULATOR ─────────────────────────────────────────────────
 with t10:
-    sh("🧪 PERIOD-BY-PERIOD SIMULATOR")
-    st.caption("Step through each rebalance period to see holdings, trades, P&L at that exact point in time.")
+    if strategy_type == "Turtle Trading":
+        sh("🧪 DAILY TURTLE SIMULATOR")
+        st.caption("Step through every trading day — open positions, ATR stops, daily P&L.")
 
-    snapshots = results.get("period_snapshots", [])
-    if not snapshots:
-        st.info("No rebalance periods captured. Run the backtest first.")
-    else:
-        snap_dates = [s["date"] for s in snapshots]
-        snap_labels = [d.strftime("%Y-%m-%d (%a)") for d in snap_dates]
-
-        # Year filter — use session_state keys to preserve across reruns
-        years_avail = sorted(set(d.year for d in snap_dates))
-        year_options = ["All"] + [str(y) for y in years_avail]
-
-        # Init session state defaults
-        if "sim_year" not in st.session_state:
-            st.session_state["sim_year"] = "All"
-        if "sim_label" not in st.session_state:
-            st.session_state["sim_label"] = None
-
-        sim_c1, sim_c2 = st.columns([1, 3])
-        with sim_c1:
-            sel_year = st.selectbox(
-                "Filter by year", year_options,
-                index=year_options.index(st.session_state["sim_year"])
-                      if st.session_state["sim_year"] in year_options else 0,
-                key="sim_year_box",
-            )
-            st.session_state["sim_year"] = sel_year
-
-        if sel_year != "All":
-            filtered_snaps = [(i,s) for i,s in enumerate(snapshots) if s["date"].year == int(sel_year)]
+        if eq.empty:
+            st.info("Run the backtest first.")
         else:
-            filtered_snaps = list(enumerate(snapshots))
+            all_sim_dates = eq.index.tolist()
+            yrs_t  = sorted({d.year for d in all_sim_dates})
+            yopts_t= ["All"] + [str(y) for y in yrs_t]
 
-        if not filtered_snaps:
-            st.info("No rebalance periods in selected year.")
-        else:
-            f_labels = [snapshots[i]["date"].strftime("%Y-%m-%d (%a)") for i,_ in filtered_snaps]
+            if "tsim_year" not in st.session_state:  st.session_state["tsim_year"] = "All"
+            if "tsim_date" not in st.session_state:  st.session_state["tsim_date"] = None
 
-            # Restore previously selected label if still valid
-            prev_label = st.session_state.get("sim_label")
-            default_idx = f_labels.index(prev_label) if prev_label in f_labels else len(f_labels) // 2
+            tc1, tc2 = st.columns([1, 3])
+            with tc1:
+                t_year = st.selectbox("Filter by year", yopts_t,
+                    index=yopts_t.index(st.session_state["tsim_year"])
+                          if st.session_state["tsim_year"] in yopts_t else 0,
+                    key="tsim_year_box")
+                st.session_state["tsim_year"] = t_year
 
-            with sim_c2:
-                sel_label = st.select_slider(
-                    "Select Rebalance Period", options=f_labels,
-                    value=f_labels[default_idx],
-                    key="sim_period_slider",
-                )
-            st.session_state["sim_label"] = sel_label
-            sel_idx_s = f_labels.index(sel_label)
-            orig_idx, snap = filtered_snaps[sel_idx_s]
-            snap_dt = snap["date"]
-
-            # Compute realized PnL up to this period
-            tr_to_date = tr[pd.to_datetime(tr["date"]) <= snap_dt] if not tr.empty and "date" in tr.columns else pd.DataFrame()
-            realized_pnl = float(tr_to_date[tr_to_date["action"].isin(["SELL","TRIM"])]["pnl"].sum()) if not tr_to_date.empty and "pnl" in tr_to_date.columns else 0.0
-
-            # Unrealized P&L
-            unrealized_pnl = sum(v["unrealised"] for v in snap["holdings"].values())
-
-            # Max DD up to this date
-            eq_to_date = eq[:snap_dt]
-            if not eq_to_date.empty:
-                rm_to  = eq_to_date.cummax()
-                dd_to  = (eq_to_date - rm_to) / rm_to
-                max_dd_to = dd_to.min() * 100
+            t_dates = [d for d in all_sim_dates if d.year==int(t_year)] if t_year!="All" else all_sim_dates
+            if not t_dates:
+                st.info("No data for selected year.")
             else:
-                max_dd_to = 0.0
+                t_labels = [d.strftime("%Y-%m-%d (%a)") for d in t_dates]
+                prev_td  = st.session_state.get("tsim_date")
+                def_idx  = t_labels.index(prev_td) if prev_td in t_labels else len(t_labels)-1
+                with tc2:
+                    sel_t_label = st.select_slider("Select Date", options=t_labels,
+                        value=t_labels[def_idx], key="tsim_date_slider")
+                st.session_state["tsim_date"] = sel_t_label
+                sel_dt = pd.Timestamp(sel_t_label[:10])
 
-            # Summary cards
-            sc1,sc2,sc3,sc4,sc5 = st.columns(5)
-            with sc1: mcard("Portfolio Value", f"₹{snap['portfolio_val']:,.0f}", True)
-            with sc2: mcard("Cash", f"₹{snap['cash']:,.0f}", True)
-            with sc3: mcard("Realized P&L", f"₹{realized_pnl:,.0f}", True)
-            with sc4: mcard("Unrealized P&L", f"₹{unrealized_pnl:,.0f}", True)
-            with sc5: mcard("Max DD to date", f"{max_dd_to:.1f}%", False)
+                # Trades to/on date
+                tr_to   = tr[pd.to_datetime(tr["date"]) <= sel_dt] if not tr.empty and "date" in tr.columns else pd.DataFrame()
+                tr_today= tr[pd.to_datetime(tr["date"]) == sel_dt] if not tr.empty and "date" in tr.columns else pd.DataFrame()
+                realized_to = float(tr_to[tr_to["action"]=="SELL"]["pnl"].sum()) if not tr_to.empty and "pnl" in tr_to.columns else 0.0
 
-            # Regime badge
-            reg_c = snap.get("regime","—")
-            cls   = {"BULL":"pill-bull","NEUTRAL":"pill-neutral","BEAR":"pill-bear"}.get(reg_c,"pill-neutral")
-            action_info = f" · Action: <b>{regime_action}</b>" if use_regime else ""
-            st.markdown(f'Regime on this date: <span class="{cls}">{reg_c}</span>{action_info}', unsafe_allow_html=True)
+                port_to = float(eq.loc[sel_dt]) if sel_dt in eq.index else 0.0
+                eq_to   = eq[:sel_dt]
+                dd_to   = ((eq_to - eq_to.cummax()) / eq_to.cummax()).min() * 100 if not eq_to.empty else 0.0
 
-            st.markdown("---")
-            h_col, t_col = st.columns([3,2])
+                # Reconstruct open positions from trade log
+                open_pos = {}
+                if not tr_to.empty and "symbol" in tr_to.columns:
+                    for sym in tr_to["symbol"].unique():
+                        b = tr_to[(tr_to["symbol"]==sym) & (tr_to["action"].isin(["BUY","ADD"]))]
+                        s = tr_to[(tr_to["symbol"]==sym) & (tr_to["action"]=="SELL")]
+                        net_sh = b["shares"].sum() - (s["shares"].sum() if not s.empty else 0)
+                        if net_sh > 0.001:
+                            avg_entry = (b["price"]*b["shares"]).sum() / b["shares"].sum()
+                            curr_px   = 0.0
+                            atr_now   = 0.0
+                            if isinstance(signals, dict) and sym in signals:
+                                sdf = signals[sym]
+                                nearest = sdf[sdf.index <= sel_dt]
+                                if not nearest.empty:
+                                    curr_px = float(nearest["close"].iloc[-1])
+                                    atr_now = float(nearest["atr"].iloc[-1]) if not pd.isna(nearest["atr"].iloc[-1]) else 0
+                            mkt = net_sh * curr_px
+                            cost= net_sh * avg_entry
+                            open_pos[sym] = {
+                                "units":     len(b),
+                                "shares":    round(net_sh, 4),
+                                "avg_entry": round(avg_entry, 2),
+                                "curr_price":round(curr_px, 2),
+                                "mkt_value": round(mkt, 2),
+                                "unrealised":round(mkt - cost, 2),
+                                "atr":       round(atr_now, 2),
+                                "stop_price":round(avg_entry - turtle_stop_mult * atr_now, 2),
+                            }
 
-            with h_col:
-                sh("HOLDINGS ON THIS DATE")
-                if snap["holdings"]:
-                    df_snap = pd.DataFrame([
-                        {"Symbol": sym,
-                         "Shares": round(v["shares"], 2),
-                         "Cost Basis/sh (₹)": v["entry_price"],
-                         "Current Price (₹)": v["curr_price"],
-                         "Cost Value (₹)": v.get("cost_value", round(v["shares"]*v["entry_price"],2)),
-                         "Market Value (₹)": v["mkt_value"],
-                         "Unrealized P&L (₹)": v["unrealised"],
-                         "Weight (%)": v["weight_pct"]}
-                        for sym, v in snap["holdings"].items()
-                    ]).sort_values("Market Value (₹)", ascending=False)
+                unrealized_to = sum(p["unrealised"] for p in open_pos.values())
+                sc1,sc2,sc3,sc4,sc5 = st.columns(5)
+                with sc1: mcard("Portfolio Value",  f"₹{port_to:,.0f}", True)
+                with sc2: mcard("Open Positions",   str(len(open_pos)), True)
+                with sc3: mcard("Realized P&L",     f"₹{realized_to:,.0f}", True)
+                with sc4: mcard("Unrealized P&L",   f"₹{unrealized_to:,.0f}", True)
+                with sc5: mcard("Max DD to date",   f"{dd_to:.1f}%", False)
+                st.markdown("---")
 
-                    # Color unrealized P&L
-                    def color_pnl(val):
-                        color = "#3FB950" if val >= 0 else "#F85149"
-                        return f"color: {color}"
+                h_col, t_col = st.columns([3, 2])
+                with h_col:
+                    sh("OPEN POSITIONS")
+                    if open_pos:
+                        df_op = pd.DataFrame([
+                            {"Symbol":sym,"Units":v["units"],"Shares":v["shares"],
+                             "Avg Entry (₹)":v["avg_entry"],"Current (₹)":v["curr_price"],
+                             "Mkt Value (₹)":v["mkt_value"],"Unrealized P&L (₹)":v["unrealised"],
+                             "ATR":v["atr"],"Stop (₹)":v["stop_price"]}
+                            for sym,v in open_pos.items()
+                        ]).sort_values("Mkt Value (₹)", ascending=False)
+                        def _cpnl(val):
+                            return f"color:{'#3FB950' if val>=0 else '#F85149'}"
+                        st.dataframe(df_op.style.map(_cpnl, subset=["Unrealized P&L (₹)"]),
+                                     use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No open positions on this date.")
 
-                    st.dataframe(
-                        df_snap.style.map(color_pnl, subset=["Unrealized P&L (₹)"]),
-                        use_container_width=True, hide_index=True
-                    )
-                else:
-                    st.info("No holdings on this date.")
+                with t_col:
+                    sh("TRADES TODAY")
+                    if not tr_today.empty:
+                        cols_show = [c for c in ["action","symbol","price","shares","value","pnl","reason"] if c in tr_today.columns]
+                        def _cact(val):
+                            return ("color:#3FB950" if val in ("BUY","ADD") else ("color:#F85149" if val=="SELL" else ""))
+                        st.dataframe(tr_today[cols_show].style.map(_cact, subset=["action"]),
+                                     use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No trades on this date.")
 
-            with t_col:
-                sh("TRADES ON THIS DATE")
-                trades_today = [r for r in (snap.get("trades_today") or []) if r.get("date") == snap_dt]
-                if trades_today:
-                    df_tt = pd.DataFrame(trades_today)[["action","symbol","price","shares","value","pnl"]]
-                    def color_action(val):
-                        return "color:#3FB950" if val=="BUY" else ("color:#F85149" if val in ("SELL","TRIM") else "")
-                    st.dataframe(
-                        df_tt.style.map(color_action, subset=["action"]),
-                        use_container_width=True, hide_index=True
-                    )
-                else:
-                    st.info("No trades on this rebalance date.")
+                st.markdown("---")
+                sh("EQUITY TO DATE")
+                if not eq_to.empty:
+                    fig_s = go.Figure()
+                    fig_s.add_trace(go.Scatter(x=eq_to.index, y=eq_to,
+                        line=dict(color="#00D4AA",width=2), fill="tozeroy",
+                        fillcolor="rgba(0,212,170,0.06)", name="Portfolio"))
+                    if sel_dt in eq_to.index:
+                        fig_s.add_trace(go.Scatter(x=[sel_dt], y=[eq_to[sel_dt]],
+                            mode="markers", marker=dict(color="#D29922",size=12,symbol="diamond"),
+                            name="Selected"))
+                    fig_s.update_layout(height=280, **PLOT)
+                    st.plotly_chart(fig_s, use_container_width=True)
 
-            # Mini equity chart up to this date
-            st.markdown("---")
-            sh("EQUITY CURVE UP TO THIS DATE")
-            eq_slice = eq[:snap_dt]
-            if not eq_slice.empty:
-                fig_s = go.Figure()
-                fig_s.add_trace(go.Scatter(x=eq_slice.index,y=eq_slice,
-                    line=dict(color="#00D4AA",width=2),fill="tozeroy",
-                    fillcolor="rgba(0,212,170,0.06)",name="Portfolio"))
-                # Mark selected date with a scatter point (plotly 6 compatible)
-                if snap_dt in eq_slice.index:
-                    fig_s.add_trace(go.Scatter(
-                        x=[snap_dt], y=[eq_slice[snap_dt]],
-                        mode="markers",
-                        marker=dict(color="#D29922", size=12, symbol="diamond"),
-                        name="Selected date", showlegend=True))
-                fig_s.update_layout(height=280,**PLOT)
-                st.plotly_chart(fig_s, use_container_width=True)
+    else:
+        # ── MOMENTUM SIMULATOR ────────────────────────────────
+        sh("🧪 PERIOD-BY-PERIOD SIMULATOR")
+        st.caption("Step through each rebalance period to see holdings, trades, P&L.")
 
+        snapshots = results.get("period_snapshots", [])
+        if not snapshots:
+            st.info("No rebalance periods captured. Run the backtest first.")
+        else:
+            snap_dates   = [s["date"] for s in snapshots]
+            snap_labels  = [d.strftime("%Y-%m-%d (%a)") for d in snap_dates]
+            years_avail  = sorted({d.year for d in snap_dates})
+            year_options = ["All"] + [str(y) for y in years_avail]
+
+            if "sim_year" not in st.session_state:  st.session_state["sim_year"] = "All"
+            if "sim_label" not in st.session_state: st.session_state["sim_label"] = None
+
+            sim_c1, sim_c2 = st.columns([1, 3])
+            with sim_c1:
+                sel_year = st.selectbox("Filter by year", year_options,
+                    index=year_options.index(st.session_state["sim_year"])
+                          if st.session_state["sim_year"] in year_options else 0,
+                    key="sim_year_box")
+                st.session_state["sim_year"] = sel_year
+
+            filtered_snaps = [(i,s) for i,s in enumerate(snapshots)
+                              if s["date"].year==int(sel_year)] if sel_year!="All"                              else list(enumerate(snapshots))
+
+            if not filtered_snaps:
+                st.info("No periods in selected year.")
+            else:
+                f_labels  = [snapshots[i]["date"].strftime("%Y-%m-%d (%a)") for i,_ in filtered_snaps]
+                prev_lbl  = st.session_state.get("sim_label")
+                def_idx   = f_labels.index(prev_lbl) if prev_lbl in f_labels else len(f_labels)//2
+                with sim_c2:
+                    sel_label = st.select_slider("Select Rebalance Period", options=f_labels,
+                        value=f_labels[def_idx], key="sim_period_slider")
+                st.session_state["sim_label"] = sel_label
+
+                sel_idx_s = f_labels.index(sel_label)
+                orig_idx, snap = filtered_snaps[sel_idx_s]
+                snap_dt = snap["date"]
+
+                tr_to_date  = tr[pd.to_datetime(tr["date"]) <= snap_dt] if not tr.empty and "date" in tr.columns else pd.DataFrame()
+                realized_pnl= float(tr_to_date[tr_to_date["action"].isin(["SELL","TRIM"])]["pnl"].sum()) if not tr_to_date.empty and "pnl" in tr_to_date.columns else 0.0
+                unrealized_pnl = sum(v["unrealised"] for v in snap["holdings"].values())
+
+                eq_to_date = eq[:snap_dt]
+                max_dd_to  = ((eq_to_date - eq_to_date.cummax()) / eq_to_date.cummax()).min() * 100 if not eq_to_date.empty else 0.0
+
+                sc1,sc2,sc3,sc4,sc5 = st.columns(5)
+                with sc1: mcard("Portfolio Value", f"₹{snap['portfolio_val']:,.0f}", True)
+                with sc2: mcard("Cash",            f"₹{snap['cash']:,.0f}", True)
+                with sc3: mcard("Realized P&L",    f"₹{realized_pnl:,.0f}", True)
+                with sc4: mcard("Unrealized P&L",  f"₹{unrealized_pnl:,.0f}", True)
+                with sc5: mcard("Max DD to date",  f"{max_dd_to:.1f}%", False)
+
+                reg_c = snap.get("regime","—")
+                cls   = {"BULL":"pill-bull","NEUTRAL":"pill-neutral","BEAR":"pill-bear"}.get(reg_c,"pill-neutral")
+                action_info = f" · Action: <b>{regime_action}</b>" if use_regime else ""
+                st.markdown(f'Regime: <span class="{cls}">{reg_c}</span>{action_info}', unsafe_allow_html=True)
+                st.markdown("---")
+
+                h_col, t_col = st.columns([3, 2])
+                with h_col:
+                    sh("HOLDINGS ON THIS DATE")
+                    if snap["holdings"]:
+                        df_snap = pd.DataFrame([
+                            {"Symbol":sym,"Shares":round(v["shares"],2),
+                             "Cost Basis/sh (₹)":v["entry_price"],
+                             "Current Price (₹)":v["curr_price"],
+                             "Cost Value (₹)":v.get("cost_value",round(v["shares"]*v["entry_price"],2)),
+                             "Market Value (₹)":v["mkt_value"],
+                             "Unrealized P&L (₹)":v["unrealised"],
+                             "Weight (%)":v["weight_pct"]}
+                            for sym,v in snap["holdings"].items()
+                        ]).sort_values("Market Value (₹)", ascending=False)
+                        def color_pnl(val):
+                            return f"color:{'#3FB950' if val>=0 else '#F85149'}"
+                        st.dataframe(df_snap.style.map(color_pnl, subset=["Unrealized P&L (₹)"]),
+                                     use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No holdings on this date.")
+
+                with t_col:
+                    sh("TRADES ON THIS DATE")
+                    trades_today = [r for r in (snap.get("trades_today") or []) if r.get("date")==snap_dt]
+                    if trades_today:
+                        df_tt = pd.DataFrame(trades_today)[[c for c in ["action","symbol","price","shares","value","pnl"] if c in pd.DataFrame(trades_today).columns]]
+                        def color_action(val):
+                            return "color:#3FB950" if val=="BUY" else ("color:#F85149" if val in ("SELL","TRIM") else "")
+                        st.dataframe(df_tt.style.map(color_action, subset=["action"]),
+                                     use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No trades on this rebalance date.")
+
+                st.markdown("---")
+                sh("EQUITY CURVE UP TO THIS DATE")
+                eq_slice = eq[:snap_dt]
+                if not eq_slice.empty:
+                    fig_s = go.Figure()
+                    fig_s.add_trace(go.Scatter(x=eq_slice.index, y=eq_slice,
+                        line=dict(color="#00D4AA",width=2), fill="tozeroy",
+                        fillcolor="rgba(0,212,170,0.06)", name="Portfolio"))
+                    if snap_dt in eq_slice.index:
+                        fig_s.add_trace(go.Scatter(x=[snap_dt], y=[eq_slice[snap_dt]],
+                            mode="markers", marker=dict(color="#D29922",size=12,symbol="diamond"),
+                            name="Selected date"))
+                    fig_s.update_layout(height=280, **PLOT)
+                    st.plotly_chart(fig_s, use_container_width=True)
 
 # ── EXPORT ────────────────────────────────────────────────────
 st.markdown("---")
