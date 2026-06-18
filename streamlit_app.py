@@ -182,6 +182,9 @@ with st.sidebar:
     st.markdown("---")
 
     _is_turtle = (strategy_type == "Turtle Trading")
+    # Defaults (overridden by Turtle trade limits section if enabled)
+    enable_trade_limit  = False
+    max_open_trades_val = None
 
     sh("Moving Averages")
     if _is_turtle:
@@ -284,6 +287,19 @@ with st.sidebar:
         trail_label = "10" if turtle_system == 1 else "20"
         st.caption(f"Trailing exit: {trail_label}-day lowest low (auto)")
         st.markdown("---")
+        sh("Turtle Trade Limits")
+        enable_trade_limit = st.toggle("Limit max concurrent open trades", value=True,
+            help="No new market entry until an existing one exits")
+        if enable_trade_limit:
+            max_open_trades_val = st.number_input(
+                "Max open trades at any time", min_value=1, max_value=50, value=10, step=1)
+            per_trade_risk = capital * turtle_risk_pct
+            per_pos_alloc  = capital / max_open_trades_val
+            st.caption(
+                f"₹{capital:,.0f} portfolio  |  "
+                f"Risk/trade: ₹{per_trade_risk:,.0f} ({turtle_risk_pct*100:.2f}%)  |  "
+                f"Slot size: ₹{per_pos_alloc:,.0f}"
+            )
 
     run_btn = st.button("▶  RUN BACKTEST", use_container_width=True)
 
@@ -473,6 +489,7 @@ else:
             allow_pyramid=turtle_pyramid,
             txn=txn, slip=slip, rf=rf_rate,
             universe=idx_info.get("components",[]) if not csv_prices else None,
+            max_open_trades=max_open_trades_val,
         )
         # Prices for charting
         prices   = pd.DataFrame({s: df["close"] for s, df in ohlcv_dict.items()})
@@ -573,6 +590,7 @@ st.markdown(f"""
   <span>🏆 Rank: <b style="color:#E6EDF3">{rank_by}</b></span>
   <span style="color:#30363D">|</span>
   <span>💰 <b style="color:#E6EDF3">{alloc_mode}</b> · <b style="color:#E6EDF3">{sizing}</b></span>
+  {"<span style='color:#30363D'>|</span><span>🔒 Max <b style='color:#E6EDF3'>" + str(max_open_trades_val) + " trades</b></span>" if enable_trade_limit else ""}
   {regime_badge}
 </div>
 """, unsafe_allow_html=True)

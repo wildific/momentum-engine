@@ -426,8 +426,13 @@ def run_backtest(
     use_corr_filter=False, corr_threshold=0.7, corr_window=60,
     regime_action="Scale Exposure",
     universe=None,
+    max_open_trades=None,   # None = no limit (defaults to top_n)
 ):
     prices = prices.sort_index().dropna(how="all", axis=1).dropna(how="all", axis=0)
+    # max_open_trades: hard cap on concurrent positions
+    # A new symbol can only enter when len(holdings) < this limit
+    if max_open_trades is None:
+        max_open_trades = top_n
 
     # ── Strictly enforce universe (handles .NS stocks AND crypto) ──
     if universe:
@@ -563,6 +568,12 @@ def run_backtest(
                 delta_sh  = target_sh - holdings.get(sym, 0.0)
 
                 if delta_sh > 0.001:
+                    # ── MAX OPEN TRADES GUARD ──────────────────
+                    # No new position if already at max_open_trades limit
+                    # (existing holdings can be topped up, but no new symbols)
+                    if sym not in holdings and len(holdings) >= max_open_trades:
+                        continue   # slot not free — wait for an exit
+
                     buy_cost = min(delta_sh * cost_per, cash)
                     sh = buy_cost / cost_per if cost_per > 0 else 0.0
                     if sh <= 0: continue
@@ -947,6 +958,7 @@ def run_turtle_backtest(
     rf: float = 0.065,
     universe: list = None,
     trailing_window: int = None,
+    max_open_trades: int = None,    # None = unlimited
 ) -> dict:
     """
     Full Turtle Trading backtest.
@@ -1038,7 +1050,13 @@ def run_turtle_backtest(
             n_units = len(positions[sym])
 
             # New entry
-            if entry_signal and n_units == 0:
+            # Count total open markets (symbols with any position)
+            open_markets = sum(1 for s, pl in positions.items() if pl)
+            _at_limit = (max_open_trades is not None and
+                         open_markets >= max_open_trades and
+                         n_units == 0)
+
+            if entry_signal and n_units == 0 and not _at_limit:
                 unit_size = (port_val * risk_pct) / atr_val if atr_val > 0 else 0
                 shares    = unit_size / curr_px if curr_px > 0 else 0
                 cost      = shares * curr_px * (1 + slip) * (1 + txn)
