@@ -1160,3 +1160,229 @@ def run_turtle_backtest(
         "total_invested":  capital,
         "period_snapshots": [],   # turtle doesn't use period snapshots
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# RATIO DONCHIAN ROTATION STRATEGY
+# Rotate between Asset A and Asset B based on Donchian breakout
+# of their price RATIO (A/B).
+# ═══════════════════════════════════════════════════════════════
+
+def compute_ratio(price_a: pd.Series, price_b: pd.Series,
+                  freq: str = "Daily") -> pd.Series:
+    """
+    Compute ratio = price_a / price_b.
+    freq: "Daily" or "Weekly" — resamples close prices before dividing.
+    """
+    df = pd.DataFrame({"a": price_a, "b": price_b}).dropna()
+    if freq == "Weekly":
+        df = df.resample("W-FRI").last().dropna()
+    ratio = (df["a"] / df["b"]).rename("ratio")
+    return ratio
+
+
+def ratio_donchian_signals(
+    ratio: pd.Series,
+    upper_window: int = 20,
+    lower_window: int = 20,
+) -> pd.DataFrame:
+    """
+    Compute Donchian channel on the ratio series.
+    upper_window: lookback for upper band (highest ratio)
+    lower_window: lookback for lower band (lowest ratio)
+    Returns DataFrame with: ratio, donchian_upper, donchian_lower, signal
+      signal = "A" when ratio > upper band (go long Asset A)
+      signal = "B" when ratio < lower band (go long Asset B)
+      signal = previous signal otherwise (hold)
+    """
+    df = ratio.to_frame("ratio").copy()
+    df["donchian_upper"] = df["ratio"].rolling(upper_window).max().shift(1)
+    df["donchian_lower"] = df["ratio"].rolling(lower_window).min().shift(1)
+
+    signal = []
+    current = None
+    for _, row in df.iterrows():
+        if pd.isna(row["donchian_upper"]) or pd.isna(row["donchian_lower"]):
+            signal.append(current)
+            continue
+        if row["ratio"] > row["donchian_upper"]:
+            current = "A"
+        elif row["ratio"] < row["donchian_lower"]:
+            current = "B"
+        # else: hold current signal (no change)
+        signal.append(current)
+
+    df["signal"] = signal
+    return df
+
+
+def run_ratio_rotation_backtest(
+    price_a: pd.Series,
+    price_b: pd.Series,
+    symbol_a: str,
+    symbol_b: str,
+    benchmark: pd.Series,
+    freq: str = "Daily",          # "Daily" or "Weekly" ratio calculation
+    upper_window: int = 20,
+    lower_window: int = 20,
+    capital: float = 1_000_000,
+    txn: float = 0.001,
+    slip: float = 0.001,
+    rf: float = 0.065,
+) -> dict:
+    """
+    Backtest a 2-asset rotation strategy:
+    - Compute ratio = price_a / price_b (daily or weekly)
+    - Donchian breakout on the ratio decides which asset to hold
+    - Always fully invested in either A or B (or cash if no signal yet)
+    """
+    # Compute ratio + signals (on chosen frequency)
+    ratio_df = ratio_donchian_signals(
+        compute_ratio(price_a, price_b, freq), upper_window, lower_window
+    )
+
+    # If weekly, forward-fill signal to daily dates for execution
+    daily_idx = price_a.index.intersection(price_b.index)
+    if freq == "Weekly":
+        sig_daily = ratio_df["signal"].reindex(daily_idx, method="ffill")
+        ratio_daily = compute_ratio(price_a, price_b, "Daily").reindex(daily_idx)
+        upper_daily = ratio_df["donchian_upper"].reindex(daily_idx, method="ffill")
+        lower_daily = ratio_df["donchian_lower"].reindex(daily_idx, method="ffill")
+    else:
+        sig_daily   = ratio_df["signal"].reindex(daily_idx, method="ffill")
+        ratio_daily = ratio_df["ratio"].reindex(daily_idx, method="ffill")
+        upper_daily = ratio_df["donchian_upper"].reindex(daily_idx, method="ffill")
+        lower_daily = ratio_df["donchian_lower"].reindex(daily_idx, method="ffill")
+
+    px_a = price_a.reindex(daily_idx)
+    px_b = price_b.reindex(daily_idx)
+
+    cash = float(capital)
+    shares = 0.0
+    held_symbol = None   # "A" or "B" or None
+    entry_px = 0.0
+    entry_dt = None
+
+    eq_rows, tr_rows = [], []
+
+    for dt in daily_idx:
+        sig = sig_daily.get(dt)
+        pa  = float(px_a.get(dt, np.nan))
+        pb  = float(px_b.get(dt, np.nan))
+
+        # Mark to market
+        if held_symbol == "A" and not pd.isna(pa):
+            port_val = cash + shares * pa
+        elif held_symbol == "B" and not pd.isna(pb):
+            port_val = cash + shares * pb
+        else:
+            port_val = cash
+        eq_rows.append({"date": dt, "value": port_val})
+
+        # Rotation logic
+        if sig is None or pd.isna(sig):
+            continue
+
+        if sig != held_symbol:
+            # Exit current holding
+            if held_symbol == "A" and not pd.isna(pa) and shares > 0:
+                sell_px  = pa * (1 - slip)
+                proceeds = shares * sell_px * (1 - txn)
+                pnl      = proceeds - shares * entry_px
+                cash    += proceeds
+                tr_rows.append({"date": dt, "action": "SELL", "symbol": symbol_a,
+                    "price": round(sell_px,2), "shares": round(shares,4),
+                    "value": round(proceeds,2), "pnl": round(pnl,2),
+                    "held_days": (dt - entry_dt).days if entry_dt else 0})
+                shares = 0.0; held_symbol = None
+
+            elif held_symbol == "B" and not pd.isna(pb) and shares > 0:
+                sell_px  = pb * (1 - slip)
+                proceeds = shares * sell_px * (1 - txn)
+                pnl      = proceeds - shares * entry_px
+                cash    += proceeds
+                tr_rows.append({"date": dt, "action": "SELL", "symbol": symbol_b,
+                    "price": round(sell_px,2), "shares": round(shares,4),
+                    "value": round(proceeds,2), "pnl": round(pnl,2),
+                    "held_days": (dt - entry_dt).days if entry_dt else 0})
+                shares = 0.0; held_symbol = None
+
+            # Enter new holding
+            if sig == "A" and not pd.isna(pa):
+                buy_px = pa * (1 + slip)
+                cost_per = buy_px * (1 + txn)
+                shares = cash / cost_per if cost_per > 0 else 0
+                cost = shares * cost_per
+                cash -= cost
+                entry_px = cost_per
+                entry_dt = dt
+                held_symbol = "A"
+                tr_rows.append({"date": dt, "action": "BUY", "symbol": symbol_a,
+                    "price": round(buy_px,2), "shares": round(shares,4),
+                    "value": round(cost,2), "pnl": 0, "held_days": 0})
+
+            elif sig == "B" and not pd.isna(pb):
+                buy_px = pb * (1 + slip)
+                cost_per = buy_px * (1 + txn)
+                shares = cash / cost_per if cost_per > 0 else 0
+                cost = shares * cost_per
+                cash -= cost
+                entry_px = cost_per
+                entry_dt = dt
+                held_symbol = "B"
+                tr_rows.append({"date": dt, "action": "BUY", "symbol": symbol_b,
+                    "price": round(buy_px,2), "shares": round(shares,4),
+                    "value": round(cost,2), "pnl": 0, "held_days": 0})
+
+    equity = pd.DataFrame(eq_rows).set_index("date")["value"]
+    trades = pd.DataFrame(tr_rows) if tr_rows else pd.DataFrame()
+
+    bm = benchmark.reindex(equity.index).ffill()
+    bm_curve = (bm / bm.iloc[0] * capital
+                if not bm.empty and bm.iloc[0] != 0
+                else pd.Series(dtype=float))
+
+    bm_cagr = 0.0
+    for bm_s in [bm.dropna(), bm_curve.dropna()]:
+        if len(bm_s) > 5 and bm_s.iloc[0] != 0:
+            nyrs = (bm_s.index[-1] - bm_s.index[0]).days / 365.25
+            bm_cagr = ((bm_s.iloc[-1] / bm_s.iloc[0]) ** (1 / max(nyrs, 0.01)) - 1) * 100
+            if bm_cagr != 0:
+                break
+
+    metrics = compute_metrics(equity, bm, trades, rf, capital)
+    metrics["Index CAGR (%)"] = round(bm_cagr, 2)
+
+    # P&L reconciliation
+    sells = trades[trades["action"]=="SELL"]["pnl"] if not trades.empty and "action" in trades.columns else pd.Series()
+    realized = float(sells.sum()) if not sells.empty else 0.0
+    final_val = float(equity.iloc[-1]) if not equity.empty else capital
+    unrealized = final_val - capital - realized
+    metrics["Realized P&L (₹)"]   = round(realized, 0)
+    metrics["Unrealized P&L (₹)"] = round(unrealized, 0)
+    metrics["Total P&L (₹)"]      = round(final_val - capital, 0)
+
+    final_holdings = {}
+    final_prices_map = {}
+    if held_symbol == "A":
+        final_holdings[symbol_a] = shares
+        final_prices_map[symbol_a] = float(px_a.iloc[-1]) if not px_a.empty else 0
+    elif held_symbol == "B":
+        final_holdings[symbol_b] = shares
+        final_prices_map[symbol_b] = float(px_b.iloc[-1]) if not px_b.empty else 0
+
+    return {
+        "equity":          equity,
+        "benchmark":       bm_curve,
+        "trades":          trades,
+        "metrics":         metrics,
+        "final_holdings":  final_holdings,
+        "final_prices":    pd.Series(final_prices_map),
+        "total_invested":  capital,
+        "period_snapshots": [],
+        "ratio_df":        ratio_df,
+        "ratio_daily":     ratio_daily,
+        "donchian_upper_daily": upper_daily,
+        "donchian_lower_daily": lower_daily,
+        "held_symbol_final": held_symbol,
+    }

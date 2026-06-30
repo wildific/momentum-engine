@@ -13,7 +13,8 @@ from engine import (fetch_yahoo, fetch_index, parse_csv, ma,
                     generate_signals, run_backtest, detect_regime, run_monte_carlo,
                     fetch_crypto_yahoo, fetch_coingecko, fetch_binance,
                     is_crypto_ticker, COINGECKO_IDS,
-                    fetch_ohlcv, run_turtle_backtest, turtle_signals, compute_atr)
+                    fetch_ohlcv, run_turtle_backtest, turtle_signals, compute_atr,
+                    compute_ratio, ratio_donchian_signals, run_ratio_rotation_backtest)
 
 warnings.filterwarnings("ignore")
 
@@ -143,32 +144,62 @@ with st.sidebar:
 
     sh("Strategy Type")
     strategy_type = st.selectbox("Strategy",
-        ["Momentum", "Turtle Trading"],
-        help="Momentum: MA crossover + rank-based entry\nTurtle Trading: Donchian breakout + ATR position sizing")
+        ["Momentum", "Turtle Trading", "Ratio Donchian Rotation"],
+        help="Momentum: MA crossover + rank-based entry\nTurtle Trading: Donchian breakout + ATR position sizing\nRatio Donchian Rotation: rotate between 2 assets based on ratio breakout")
     st.markdown("---")
 
-    sh("Universe")
-    cat      = st.selectbox("Category", list(INDEX_CATEGORIES.keys()), label_visibility="collapsed")
-    idx_name = st.selectbox("Index", INDEX_CATEGORIES[cat])
-    idx_info = NSE_INDICES.get(idx_name, {})
-    # Crypto data source (shown only for Crypto category)
-    crypto_source = "Yahoo Finance"
-    if cat == "Crypto":
-        crypto_source = st.selectbox("Crypto Data Source", [
-            "Yahoo Finance",
-            "CoinGecko (free, slower)",
-            "Binance (USDT pairs)",
-        ], help="Yahoo Finance: easiest, covers major pairs\nCoinGecko: 10k+ coins, free API\nBinance: best OHLCV quality, USDT pairs only")
+    _is_ratio = (strategy_type == "Ratio Donchian Rotation")
 
-        if crypto_source == "CoinGecko (free, slower)":
-            st.info("📡 CoinGecko: uses coin IDs (bitcoin, ethereum). Rate limit: 30 req/min — may be slow for large universes.")
-        elif crypto_source == "Binance (USDT pairs)":
-            st.info("📡 Binance: converts tickers to USDT pairs (BTC-USD → BTCUSDT). Fastest & most accurate.")
+    if _is_ratio:
+        sh("Ratio Rotation — Pick 2 Assets")
+        st.caption("Pick any two tickers to rotate between (e.g. ETFs, stocks, crypto)")
 
-    csv_prices = st.file_uploader("📄 Upload Price CSV", type=["csv"])
-    csv_index  = st.file_uploader("📄 Upload Index/Benchmark CSV", type=["csv"])
-    if csv_prices: st.success("Price CSV ✓")
-    if csv_index:  st.success("Index CSV ✓")
+        # Build a flat list of all known tickers across all indices for convenience
+        all_known = sorted({c.replace(".NS","") for idx in NSE_INDICES.values()
+                            for c in idx.get("components", [])})
+
+        ratio_input_mode = st.radio("Input method", ["Pick from list", "Type custom ticker"],
+                                     horizontal=True)
+        if ratio_input_mode == "Pick from list":
+            sym_a = st.selectbox("Asset A (e.g. NIFTYBEES)", all_known,
+                index=all_known.index("NIFTYBEES") if "NIFTYBEES" in all_known else 0)
+            sym_b = st.selectbox("Asset B (e.g. GOLDBEES)", all_known,
+                index=all_known.index("GOLDBEES") if "GOLDBEES" in all_known else 0)
+        else:
+            sym_a = st.text_input("Asset A ticker", value="NIFTYBEES").strip().upper()
+            sym_b = st.text_input("Asset B ticker", value="GOLDBEES").strip().upper()
+
+        cat = "ETF"  # for benchmark/index_ticker fallback
+        idx_name = f"{sym_a} vs {sym_b}"
+        idx_info = {"index_ticker": "^NSEI", "components": [f"{sym_a}.NS", f"{sym_b}.NS"]}
+        crypto_source = "Yahoo Finance"
+
+        csv_prices = None
+        csv_index  = None
+
+    else:
+        sh("Universe")
+        cat      = st.selectbox("Category", list(INDEX_CATEGORIES.keys()), label_visibility="collapsed")
+        idx_name = st.selectbox("Index", INDEX_CATEGORIES[cat])
+        idx_info = NSE_INDICES.get(idx_name, {})
+        # Crypto data source (shown only for Crypto category)
+        crypto_source = "Yahoo Finance"
+        if cat == "Crypto":
+            crypto_source = st.selectbox("Crypto Data Source", [
+                "Yahoo Finance",
+                "CoinGecko (free, slower)",
+                "Binance (USDT pairs)",
+            ], help="Yahoo Finance: easiest, covers major pairs\nCoinGecko: 10k+ coins, free API\nBinance: best OHLCV quality, USDT pairs only")
+
+            if crypto_source == "CoinGecko (free, slower)":
+                st.info("📡 CoinGecko: uses coin IDs (bitcoin, ethereum). Rate limit: 30 req/min — may be slow for large universes.")
+            elif crypto_source == "Binance (USDT pairs)":
+                st.info("📡 Binance: converts tickers to USDT pairs (BTC-USD → BTCUSDT). Fastest & most accurate.")
+
+        csv_prices = st.file_uploader("📄 Upload Price CSV", type=["csv"])
+        csv_index  = st.file_uploader("📄 Upload Index/Benchmark CSV", type=["csv"])
+        if csv_prices: st.success("Price CSV ✓")
+        if csv_index:  st.success("Index CSV ✓")
     st.markdown("---")
 
     sh("Date Range & Rebalance")
@@ -186,59 +217,83 @@ with st.sidebar:
     enable_trade_limit  = False
     max_open_trades_val = None
 
+    # ── Ratio Donchian Rotation Parameters ────────────────────
+    ratio_freq         = "Daily"
+    ratio_upper_window = 20
+    ratio_lower_window = 20
+    if _is_ratio:
+        sh("Ratio Donchian Settings")
+        st.caption(f"Ratio = {sym_a} / {sym_b}")
+        ratio_freq = st.selectbox("Ratio Calculation Frequency", ["Daily","Weekly"],
+            help="Daily: ratio computed from daily close\nWeekly: ratio computed from weekly close, signal held until next week")
+        st.caption("Donchian Channel on the Ratio")
+        ratio_upper_window = st.number_input(
+            "Upper Donchian window (days)", min_value=5, max_value=252, value=20, step=5,
+            help=f"Go LONG {sym_a} when ratio breaks above this N-day high")
+        ratio_lower_window = st.number_input(
+            "Lower Donchian window (days)", min_value=5, max_value=252, value=20, step=5,
+            help=f"Go LONG {sym_b} when ratio breaks below this N-day low")
+        st.info(
+            f"📐 **Rule:** When {sym_a}/{sym_b} ratio > {ratio_upper_window}-day Donchian high → "
+            f"**Long {sym_a}**. When ratio < {ratio_lower_window}-day Donchian low → **Long {sym_b}**."
+        )
+        st.markdown("---")
+
     sh("Moving Averages")
-    if _is_turtle:
-        st.caption("⚠️ Not used in Turtle Trading — entry/exit based on Donchian breakout")
-    ma_type    = st.selectbox("MA Type", ["EMA","SMA"], disabled=_is_turtle)
+    if _is_turtle or _is_ratio:
+        st.caption("⚠️ Not used — entry/exit based on " + ("Donchian breakout (ATR)" if _is_turtle else "Ratio Donchian Rotation"))
+    ma_type    = st.selectbox("MA Type", ["EMA","SMA"], disabled=(_is_turtle or _is_ratio))
     st.caption("Entry: price > MA(fast) AND MA(fast) > MA(slow)")
-    entry_fast = st.number_input("Fast MA period", 5,  500, 50,  5, disabled=_is_turtle)
-    entry_slow = st.number_input("Slow MA period", 10, 500, 200, 10, disabled=_is_turtle)
+    entry_fast = st.number_input("Fast MA period", 5,  500, 50,  5, disabled=(_is_turtle or _is_ratio))
+    entry_slow = st.number_input("Slow MA period", 10, 500, 200, 10, disabled=(_is_turtle or _is_ratio))
     st.caption("Exit: price < MA(exit)")
-    exit_ma_type = st.selectbox("Exit MA Type", ["EMA","SMA"], key="exit_ma_type_sel", disabled=_is_turtle)
-    exit_ma_p    = st.number_input("Exit MA period", 5, 500, 20, 5, disabled=_is_turtle)
+    exit_ma_type = st.selectbox("Exit MA Type", ["EMA","SMA"], key="exit_ma_type_sel", disabled=(_is_turtle or _is_ratio))
+    exit_ma_p    = st.number_input("Exit MA period", 5, 500, 20, 5, disabled=(_is_turtle or _is_ratio))
     st.caption("Extra chart MAs (comma-separated)")
-    extra_ma_raw = st.text_input("e.g. 20,50,200", value="20,50,200", disabled=_is_turtle)
+    extra_ma_raw = st.text_input("e.g. 20,50,200", value="20,50,200", disabled=(_is_turtle or _is_ratio))
     st.markdown("---")
 
     sh("Ranking Criteria")
-    if _is_turtle:
-        st.caption("⚠️ Not used in Turtle Trading — position sized by ATR")
-    rank_by = st.selectbox("Rank by", ["Momentum","Sharpe Ratio","Return %","Low Volatility"], disabled=_is_turtle)
-    lb_opts = st.multiselect("Lookback days", [21,30,60,90,120,180,252], default=[60,90,120,252], disabled=_is_turtle)
+    if _is_turtle or _is_ratio:
+        st.caption("⚠️ Not used — " + ("position sized by ATR" if _is_turtle else "ranking not applicable in ratio rotation"))
+    rank_by = st.selectbox("Rank by", ["Momentum","Sharpe Ratio","Return %","Low Volatility"], disabled=(_is_turtle or _is_ratio))
+    lb_opts = st.multiselect("Lookback days", [21,30,60,90,120,180,252], default=[60,90,120,252], disabled=(_is_turtle or _is_ratio))
     if not lb_opts: lb_opts = [60,90,120,252]
     wcols = st.columns(min(len(lb_opts),4))
     raw_w = {}
     for i,lb in enumerate(lb_opts):
         with wcols[i%4]:
-            raw_w[lb] = st.number_input(f"{lb}d",0.0,1.0,round(1/len(lb_opts),2),0.05,key=f"w{lb}", disabled=_is_turtle)
+            raw_w[lb] = st.number_input(f"{lb}d",0.0,1.0,round(1/len(lb_opts),2),0.05,key=f"w{lb}", disabled=(_is_turtle or _is_ratio))
     tw = sum(raw_w.values()) or 1
     mom_w = {k: v/tw for k,v in raw_w.items()}
     st.markdown("---")
 
     sh("Correlation Filter")
-    use_corr     = st.toggle("Filter correlated stocks", value=False, disabled=_is_turtle)
-    corr_thresh  = st.slider("Max correlation threshold", 0.1, 1.0, 0.7, 0.05, disabled=not use_corr or _is_turtle)
-    corr_window  = st.slider("Correlation lookback (days)", 20, 120, 60, 10, disabled=not use_corr or _is_turtle)
+    use_corr     = st.toggle("Filter correlated stocks", value=False, disabled=(_is_turtle or _is_ratio))
+    corr_thresh  = st.slider("Max correlation threshold", 0.1, 1.0, 0.7, 0.05, disabled=(not use_corr or _is_turtle or _is_ratio))
+    corr_window  = st.slider("Correlation lookback (days)", 20, 120, 60, 10, disabled=(not use_corr or _is_turtle or _is_ratio))
     st.markdown("---")
 
     sh("Portfolio & Allocation")
-    if _is_turtle:
-        st.caption("⚠️ Position sizing handled by ATR risk % above")
-    top_n      = st.slider("Stocks to hold", 1, 40, 10, disabled=_is_turtle)
-    ex_rank    = st.slider("Exit rank threshold", top_n, 60, min(top_n*2,20), disabled=_is_turtle)
+    if _is_turtle or _is_ratio:
+        st.caption("⚠️ " + ("Position sizing handled by ATR risk % above" if _is_turtle else "Ratio rotation always goes 100% into the selected asset"))
+    top_n      = st.slider("Stocks to hold", 1, 40, 10, disabled=(_is_turtle or _is_ratio))
+    ex_rank    = st.slider("Exit rank threshold", top_n, 60, min(top_n*2,20), disabled=(_is_turtle or _is_ratio))
     capital    = st.number_input("Initial Portfolio (₹)", value=1_000_000, step=100_000, format="%d")
-    alloc_mode = st.selectbox("Allocation Mode", ["Reinvestment","SIP","Fixed"], disabled=_is_turtle)
+    alloc_mode = st.selectbox("Allocation Mode", ["Reinvestment","SIP","Fixed"], disabled=(_is_turtle or _is_ratio))
     sip_amount = 0
-    if alloc_mode == "SIP" and not _is_turtle:
+    if alloc_mode == "SIP" and not _is_turtle and not _is_ratio:
         sip_amount = st.number_input("SIP Amount/period (₹)", value=50_000, step=10_000, format="%d")
-    sizing  = st.selectbox("Position Sizing", ["Equal Weight","Inverse Volatility"], disabled=_is_turtle)
+    sizing  = st.selectbox("Position Sizing", ["Equal Weight","Inverse Volatility"], disabled=(_is_turtle or _is_ratio))
     txn     = st.slider("Transaction Cost (%)", 0.0, 1.0, 0.1) / 100
     slip    = st.slider("Slippage (%)", 0.0, 1.0, 0.1) / 100
     rf_rate = st.slider("Risk-Free Rate (%)", 0.0, 10.0, 6.5) / 100
     st.markdown("---")
 
     sh("Regime Detection")
-    use_regime   = st.toggle("Enable Regime Filter", value=True)
+    if _is_ratio:
+        st.caption("⚠️ Not used in Ratio Donchian Rotation — rotation is self-contained")
+    use_regime   = st.toggle("Enable Regime Filter", value=True, disabled=_is_ratio)
     st.caption("BULL = price > Short MA > Long MA")
     reg_fast     = st.number_input("Short MA period (e.g. 50)", 10, 500, 50,  10, disabled=not use_regime)
     reg_slow     = st.number_input("Long MA period  (e.g. 200)", 10, 500, 200, 10, disabled=not use_regime)
@@ -469,7 +524,30 @@ else:
         "Exit All, No New Entry":          "Exit All No Entry",
     }
 
-    if strategy_type == "Turtle Trading":
+    if strategy_type == "Ratio Donchian Rotation":
+        prog.progress(55,"Computing ratio & running rotation backtest…")
+        sym_a_clean = sym_a.replace(".NS","")
+        sym_b_clean = sym_b.replace(".NS","")
+        if sym_a_clean not in prices.columns or sym_b_clean not in prices.columns:
+            st.error(f"Could not load price data for {sym_a_clean} and/or {sym_b_clean}. "
+                     f"Check tickers are correct Yahoo Finance symbols.")
+            prog.empty(); st.stop()
+
+        results = run_ratio_rotation_backtest(
+            price_a=prices[sym_a_clean],
+            price_b=prices[sym_b_clean],
+            symbol_a=sym_a_clean,
+            symbol_b=sym_b_clean,
+            benchmark=benchmark,
+            freq=ratio_freq,
+            upper_window=ratio_upper_window,
+            lower_window=ratio_lower_window,
+            capital=float(capital),
+            txn=txn, slip=slip, rf=rf_rate,
+        )
+        signals = {}  # not used by ratio rotation tabs
+
+    elif strategy_type == "Turtle Trading":
         prog.progress(48,"Fetching OHLCV for Turtle…")
         ohlcv_dict = fetch_ohlcv(tickers, str(start_dt), str(end_dt))
         if not ohlcv_dict:
@@ -834,6 +912,50 @@ if strategy_type == "Turtle Trading" and signals:
                 yaxis_title="ATR", **PLOT)
             st.plotly_chart(fig_atr, use_container_width=True)
 
+# ── RATIO DONCHIAN CHART (shown only in Ratio Rotation mode) ──
+if strategy_type == "Ratio Donchian Rotation" and "ratio_daily" in results:
+    with t2:  # inject into Equity tab
+        st.markdown("---")
+        sh(f"📐 RATIO DONCHIAN — {sym_a} / {sym_b}")
+
+        ratio_s   = results["ratio_daily"]
+        upper_s   = results["donchian_upper_daily"]
+        lower_s   = results["donchian_lower_daily"]
+        ratio_raw = results.get("ratio_df", pd.DataFrame())
+
+        fig_ratio = go.Figure()
+        fig_ratio.add_trace(go.Scatter(x=ratio_s.index, y=ratio_s,
+            name=f"{sym_a}/{sym_b} Ratio", line=dict(color="#00D4AA", width=2)))
+        fig_ratio.add_trace(go.Scatter(x=upper_s.index, y=upper_s,
+            name=f"Upper Donchian ({ratio_upper_window}d)",
+            line=dict(color="#3FB950", width=1, dash="dot")))
+        fig_ratio.add_trace(go.Scatter(x=lower_s.index, y=lower_s,
+            name=f"Lower Donchian ({ratio_lower_window}d)",
+            line=dict(color="#F85149", width=1, dash="dot")))
+
+        # Shade regions by which asset is held
+        if not ratio_raw.empty and "signal" in ratio_raw.columns:
+            sig_col = ratio_raw["signal"].reindex(ratio_s.index, method="ffill")
+            prev_sig, seg_start = sig_col.iloc[0], ratio_s.index[0]
+            for dt2, sg in sig_col.items():
+                if sg != prev_sig:
+                    color = "rgba(0,212,170,0.08)" if prev_sig == "A" else "rgba(210,153,34,0.08)"
+                    fig_ratio.add_vrect(x0=seg_start, x1=dt2, fillcolor=color,
+                        layer="below", line_width=0)
+                    seg_start, prev_sig = dt2, sg
+            color = "rgba(0,212,170,0.08)" if prev_sig == "A" else "rgba(210,153,34,0.08)"
+            fig_ratio.add_vrect(x0=seg_start, x1=ratio_s.index[-1], fillcolor=color,
+                layer="below", line_width=0)
+
+        fig_ratio.update_layout(title=f"Ratio Donchian Channel ({ratio_freq} calc)",
+            yaxis_title="Ratio", height=420, **PLOT)
+        st.plotly_chart(fig_ratio, use_container_width=True)
+
+        st.caption(
+            f"🟢 Green shading = Long {sym_a}  ·  🟡 Yellow shading = Long {sym_b}  ·  "
+            f"Currently holding: **{results.get('held_symbol_final') and (sym_a if results['held_symbol_final']=='A' else sym_b) or 'Cash'}**"
+        )
+
 # ── PORTFOLIO ─────────────────────────────────────────────────
 with t8:
     sh("CURRENT HOLDINGS")
@@ -862,7 +984,21 @@ with t8:
 
     st.markdown("---")
     sh("⚡ LIVE SCANNER")
-    if strategy_type == "Turtle Trading":
+    if strategy_type == "Ratio Donchian Rotation":
+        held = results.get("held_symbol_final")
+        held_name = sym_a if held=="A" else (sym_b if held=="B" else "Cash")
+        ratio_raw = results.get("ratio_df", pd.DataFrame())
+        if not ratio_raw.empty:
+            last_row = ratio_raw.iloc[-1]
+            df_rs = pd.DataFrame([{
+                "Ratio": round(float(last_row["ratio"]), 4),
+                "Upper Donchian": round(float(last_row["donchian_upper"]), 4) if not pd.isna(last_row["donchian_upper"]) else None,
+                "Lower Donchian": round(float(last_row["donchian_lower"]), 4) if not pd.isna(last_row["donchian_lower"]) else None,
+                "Signal": last_row["signal"],
+                "Currently Holding": held_name,
+            }])
+            st.dataframe(df_rs, use_container_width=True, hide_index=True)
+    elif strategy_type == "Turtle Trading":
         # Turtle scanner — show current breakout status
         if isinstance(signals, dict) and signals:
             scan_rows = []
@@ -960,7 +1096,111 @@ with t9:
 
 # ── SIMULATOR ─────────────────────────────────────────────────
 with t10:
-    if strategy_type == "Turtle Trading":
+    if strategy_type == "Ratio Donchian Rotation":
+        sh("🧪 RATIO ROTATION SIMULATOR")
+        st.caption("Step through each trading day to see the ratio, Donchian bands, current holding, and trades.")
+
+        if eq.empty:
+            st.info("Run the backtest first.")
+        else:
+            ratio_raw = results.get("ratio_df", pd.DataFrame())
+            all_r_dates = eq.index.tolist()
+            yrs_r = sorted({d.year for d in all_r_dates})
+            yopts_r = ["All"] + [str(y) for y in yrs_r]
+
+            if "rsim_year" not in st.session_state: st.session_state["rsim_year"] = "All"
+            if "rsim_date" not in st.session_state: st.session_state["rsim_date"] = None
+
+            rc1, rc2 = st.columns([1,3])
+            with rc1:
+                r_year = st.selectbox("Filter by year", yopts_r,
+                    index=yopts_r.index(st.session_state["rsim_year"])
+                          if st.session_state["rsim_year"] in yopts_r else 0,
+                    key="rsim_year_box")
+                st.session_state["rsim_year"] = r_year
+
+            r_dates = [d for d in all_r_dates if d.year==int(r_year)] if r_year!="All" else all_r_dates
+            if not r_dates:
+                st.info("No data for selected year.")
+            else:
+                r_labels = [d.strftime("%Y-%m-%d (%a)") for d in r_dates]
+                prev_rl  = st.session_state.get("rsim_date")
+                def_idx_r= r_labels.index(prev_rl) if prev_rl in r_labels else len(r_labels)-1
+                with rc2:
+                    sel_r_label = st.select_slider("Select Date", options=r_labels,
+                        value=r_labels[def_idx_r], key="rsim_date_slider")
+                st.session_state["rsim_date"] = sel_r_label
+                sel_r_dt = pd.Timestamp(sel_r_label[:10])
+
+                port_to = float(eq.loc[sel_r_dt]) if sel_r_dt in eq.index else 0.0
+                eq_to_r = eq[:sel_r_dt]
+                dd_to_r = ((eq_to_r - eq_to_r.cummax())/eq_to_r.cummax()).min()*100 if not eq_to_r.empty else 0.0
+
+                tr_to_r    = tr[pd.to_datetime(tr["date"]) <= sel_r_dt] if not tr.empty and "date" in tr.columns else pd.DataFrame()
+                tr_today_r = tr[pd.to_datetime(tr["date"]) == sel_r_dt] if not tr.empty and "date" in tr.columns else pd.DataFrame()
+                realized_r = float(tr_to_r[tr_to_r["action"]=="SELL"]["pnl"].sum()) if not tr_to_r.empty and "pnl" in tr_to_r.columns else 0.0
+
+                # Ratio state on this date
+                ratio_val, upper_val, lower_val, sig_val = None, None, None, None
+                if not ratio_raw.empty:
+                    nearest_r = ratio_raw[ratio_raw.index <= sel_r_dt]
+                    if not nearest_r.empty:
+                        last_r = nearest_r.iloc[-1]
+                        ratio_val = last_r["ratio"]
+                        upper_val = last_r["donchian_upper"]
+                        lower_val = last_r["donchian_lower"]
+                        sig_val   = last_r["signal"]
+
+                held_name = (sym_a if sig_val=="A" else sym_b if sig_val=="B" else "Cash")
+
+                sc1,sc2,sc3,sc4,sc5 = st.columns(5)
+                with sc1: mcard("Portfolio Value", f"₹{port_to:,.0f}", True)
+                with sc2: mcard("Holding", held_name, True)
+                with sc3: mcard("Realized P&L", f"₹{realized_r:,.0f}", True)
+                with sc4: mcard("Ratio", f"{ratio_val:.4f}" if ratio_val else "—", True)
+                with sc5: mcard("Max DD to date", f"{dd_to_r:.1f}%", False)
+
+                st.markdown("---")
+                rh_col, rt_col = st.columns([3,2])
+                with rh_col:
+                    sh("RATIO DONCHIAN STATE")
+                    if ratio_val is not None:
+                        df_rstate = pd.DataFrame([{
+                            "Ratio": round(float(ratio_val),4),
+                            "Upper Donchian": round(float(upper_val),4) if not pd.isna(upper_val) else None,
+                            "Lower Donchian": round(float(lower_val),4) if not pd.isna(lower_val) else None,
+                            "Signal": sig_val,
+                            "Holding": held_name,
+                        }])
+                        st.dataframe(df_rstate, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No ratio data yet — still warming up Donchian window.")
+                with rt_col:
+                    sh("TRADES TODAY")
+                    if not tr_today_r.empty:
+                        cols_r = [c for c in ["action","symbol","price","shares","value","pnl"] if c in tr_today_r.columns]
+                        def _cact_r(val):
+                            return "color:#3FB950" if val=="BUY" else ("color:#F85149" if val=="SELL" else "")
+                        st.dataframe(tr_today_r[cols_r].style.map(_cact_r, subset=["action"]),
+                                     use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No trades on this date.")
+
+                st.markdown("---")
+                sh("EQUITY TO DATE")
+                if not eq_to_r.empty:
+                    fig_sr = go.Figure()
+                    fig_sr.add_trace(go.Scatter(x=eq_to_r.index, y=eq_to_r,
+                        line=dict(color="#00D4AA",width=2), fill="tozeroy",
+                        fillcolor="rgba(0,212,170,0.06)", name="Portfolio"))
+                    if sel_r_dt in eq_to_r.index:
+                        fig_sr.add_trace(go.Scatter(x=[sel_r_dt], y=[eq_to_r[sel_r_dt]],
+                            mode="markers", marker=dict(color="#D29922",size=12,symbol="diamond"),
+                            name="Selected"))
+                    fig_sr.update_layout(height=280, **PLOT)
+                    st.plotly_chart(fig_sr, use_container_width=True)
+
+    elif strategy_type == "Turtle Trading":
         sh("🧪 DAILY TURTLE SIMULATOR")
         st.caption("Step through every trading day — open positions, ATR stops, daily P&L.")
 

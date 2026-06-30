@@ -215,6 +215,13 @@ NSE_INDICES = {
             "GOLDBEES.NS","SILVERBEES.NS","NIFTYBEES.NS","LTGILTBEES.NS",
         ],
     },
+    "MOM50 ETF": {
+        "index_ticker": "^CNXMOMENTUM",
+        "components": [
+            "MOM50.NS",        # Motilal Oswal Nifty 200 Momentum 30 ETF (ticker varies)
+            "MOMENTUM50.NS",   # Nippon India Nifty Midcap150 Momentum 50 ETF
+        ],
+    },
 
     # ── Crypto (Yahoo Finance tickers, USD pairs) ─────────────
     "Crypto Top 10 (USD)": {
@@ -274,7 +281,7 @@ INDEX_CATEGORIES = {
                             "Nifty Realty"],
     "Factor / Smart Beta": ["Nifty High Beta 50", "Nifty Alpha 50",
                             "Nifty Momentum 50", "Nifty Quality Low Vol 30"],
-    "ETF":                 ["All Asset ETF"],
+    "ETF":                 ["All Asset ETF", "MOM50 ETF"],
     "Crypto":              ["Crypto Top 10 (USD)", "Crypto Large Cap (USD)",
                             "Crypto DeFi (USD)", "Crypto L1L2 (USD)",
                             "Crypto INR Pairs"],
