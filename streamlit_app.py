@@ -202,14 +202,21 @@ with st.sidebar:
         if csv_index:  st.success("Index CSV ✓")
     st.markdown("---")
 
-    sh("Date Range & Rebalance")
+    sh("Date Range" + (" & Rebalance" if strategy_type != "Ratio Donchian Rotation" else ""))
     c1,c2 = st.columns(2)
     with c1: start_dt = st.date_input("Start", value=date.today()-timedelta(days=5*365), label_visibility="collapsed")
     with c2: end_dt   = st.date_input("End",   value=date.today(), label_visibility="collapsed")
-    rebal = st.selectbox("Rebalance Frequency", ["Weekly","Monthly","Quarterly","Yearly"])
-    rebal_day = "Friday"
-    if rebal == "Weekly":
-        rebal_day = st.selectbox("Rebalance Day", ["Monday","Tuesday","Wednesday","Thursday","Friday"], index=4)
+
+    if strategy_type == "Ratio Donchian Rotation":
+        st.caption("📐 Rebalancing is event-driven — trades trigger exactly when the ratio "
+                   "breaks the Donchian band, not on a fixed calendar schedule.")
+        rebal     = "Daily"     # internal placeholder, unused by ratio engine
+        rebal_day = "Friday"
+    else:
+        rebal = st.selectbox("Rebalance Frequency", ["Weekly","Monthly","Quarterly","Yearly"])
+        rebal_day = "Friday"
+        if rebal == "Weekly":
+            rebal_day = st.selectbox("Rebalance Day", ["Monday","Tuesday","Wednesday","Thursday","Friday"], index=4)
     st.markdown("---")
 
     _is_turtle = (strategy_type == "Turtle Trading")
@@ -290,26 +297,33 @@ with st.sidebar:
     rf_rate = st.slider("Risk-Free Rate (%)", 0.0, 10.0, 6.5) / 100
     st.markdown("---")
 
-    sh("Regime Detection")
     if _is_ratio:
-        st.caption("⚠️ Not used in Ratio Donchian Rotation — rotation is self-contained")
-    use_regime   = st.toggle("Enable Regime Filter", value=True, disabled=_is_ratio)
-    st.caption("BULL = price > Short MA > Long MA")
-    reg_fast     = st.number_input("Short MA period (e.g. 50)", 10, 500, 50,  10, disabled=not use_regime)
-    reg_slow     = st.number_input("Long MA period  (e.g. 200)", 10, 500, 200, 10, disabled=not use_regime)
-    reg_ma_type  = st.selectbox("Regime MA type", ["EMA","SMA"], disabled=not use_regime)
-    vol_thresh   = st.slider("Bull vol threshold (%)", 10, 50, 20, disabled=not use_regime) / 100
-    if reg_fast >= reg_slow:
-        st.warning(f"⚠️ Short MA ({reg_fast}) ≥ Long MA ({reg_slow}). They will be auto-swapped.")
-    regime_action = "Scale Exposure"
-    if use_regime:
-        regime_action = st.selectbox("Bear Regime Action", [
-            "Scale Exposure",
-            "Exit per Strategy, No New Entry",
-            "Keep Stocks, No New Entry",
-            "Exit All, No New Entry",
-        ])
-    st.markdown("---")
+        # Regime Detection entirely skipped — ratio rotation is self-contained
+        use_regime    = False
+        reg_fast      = 50
+        reg_slow      = 200
+        reg_ma_type   = "EMA"
+        vol_thresh    = 0.20
+        regime_action = "Scale Exposure"
+    else:
+        sh("Regime Detection")
+        use_regime   = st.toggle("Enable Regime Filter", value=True)
+        st.caption("BULL = price > Short MA > Long MA")
+        reg_fast     = st.number_input("Short MA period (e.g. 50)", 10, 500, 50,  10, disabled=not use_regime)
+        reg_slow     = st.number_input("Long MA period  (e.g. 200)", 10, 500, 200, 10, disabled=not use_regime)
+        reg_ma_type  = st.selectbox("Regime MA type", ["EMA","SMA"], disabled=not use_regime)
+        vol_thresh   = st.slider("Bull vol threshold (%)", 10, 50, 20, disabled=not use_regime) / 100
+        if reg_fast >= reg_slow:
+            st.warning(f"⚠️ Short MA ({reg_fast}) ≥ Long MA ({reg_slow}). They will be auto-swapped.")
+        regime_action = "Scale Exposure"
+        if use_regime:
+            regime_action = st.selectbox("Bear Regime Action", [
+                "Scale Exposure",
+                "Exit per Strategy, No New Entry",
+                "Keep Stocks, No New Entry",
+                "Exit All, No New Entry",
+            ])
+        st.markdown("---")
 
     sh("Monte Carlo")
     mc_method = st.selectbox("Method", ["Bootstrap","Parametric","Trade Shuffle"])
@@ -528,9 +542,35 @@ else:
         prog.progress(55,"Computing ratio & running rotation backtest…")
         sym_a_clean = sym_a.replace(".NS","")
         sym_b_clean = sym_b.replace(".NS","")
-        if sym_a_clean not in prices.columns or sym_b_clean not in prices.columns:
-            st.error(f"Could not load price data for {sym_a_clean} and/or {sym_b_clean}. "
-                     f"Check tickers are correct Yahoo Finance symbols.")
+
+        # Retry fetch directly if either symbol missing (covers cases where the
+        # initial fetch dropped a column due to partial NaNs / rate limiting)
+        missing = [s for s in (sym_a_clean, sym_b_clean) if s not in prices.columns]
+        if missing:
+            retry_tickers = [f"{m}.NS" for m in missing]
+            retry_px = fetch_yahoo(retry_tickers, str(start_dt), str(end_dt))
+            if not retry_px.empty:
+                for col in retry_px.columns:
+                    prices[col] = retry_px[col]
+
+        still_missing = [s for s in (sym_a_clean, sym_b_clean) if s not in prices.columns]
+        if still_missing:
+            st.error(
+                f"Could not load price data for: {', '.join(still_missing)}. "
+                f"Verify these are valid NSE tickers on Yahoo Finance "
+                f"(e.g. NIFTYBEES, GOLDBEES — without .NS suffix). "
+                f"You can also try a different date range."
+            )
+            prog.empty(); st.stop()
+
+        # Drop rows where either leg has no data (keep only overlapping dates)
+        valid_a = prices[sym_a_clean].dropna()
+        valid_b = prices[sym_b_clean].dropna()
+        if valid_a.empty or valid_b.empty:
+            st.error(
+                f"{sym_a_clean if valid_a.empty else sym_b_clean} returned no usable price data "
+                f"for the selected date range. Try widening the date range."
+            )
             prog.empty(); st.stop()
 
         results = run_ratio_rotation_backtest(
@@ -645,33 +685,52 @@ for col,(lbl,val,suf,pg) in zip(hc,[
     with col: mcard(lbl, f"{val}{suf}", pg)
 
 # Strategy summary bar
-dl = f" ({rebal_day})" if rebal=="Weekly" else ""
-regime_badge = ""
-if regime_df is not None and not regime_df.empty:
-    cr  = str(regime_df["regime"].iloc[-1]).upper()
-    cls = {"BULL":"pill-bull","NEUTRAL":"pill-neutral","BEAR":"pill-bear"}.get(cr,"pill-neutral")
-    ra_display = ra_map.get(regime_action, regime_action)
-    regime_badge = (f'&nbsp;&nbsp;|&nbsp;&nbsp;Latest Regime: <span class="{cls}">{cr}</span>'
-                   + (f'&nbsp;<span style="color:#7D8590;font-size:11px">[Bear: {ra_display}]</span>'
-                      if use_regime else ''))
+if strategy_type == "Ratio Donchian Rotation":
+    held = results.get("held_symbol_final")
+    held_name = sym_a if held=="A" else (sym_b if held=="B" else "Cash")
+    st.markdown(f"""
+    <div style="background:#161B22;border:1px solid #21262D;border-radius:8px;
+                padding:10px 16px;margin-bottom:12px;font-size:13px;color:#8B949E;
+                display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <span>📐 Ratio: <b style="color:#E6EDF3">{sym_a} / {sym_b}</b></span>
+      <span style="color:#30363D">|</span>
+      <span>📊 Calc: <b style="color:#E6EDF3">{ratio_freq}</b></span>
+      <span style="color:#30363D">|</span>
+      <span>⬆️ Upper Donchian: <b style="color:#E6EDF3">{ratio_upper_window}d</b></span>
+      <span style="color:#30363D">|</span>
+      <span>⬇️ Lower Donchian: <b style="color:#E6EDF3">{ratio_lower_window}d</b></span>
+      <span style="color:#30363D">|</span>
+      <span>📍 Currently Holding: <b style="color:#3FB950">{held_name}</b></span>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    dl = f" ({rebal_day})" if rebal=="Weekly" else ""
+    regime_badge = ""
+    if regime_df is not None and not regime_df.empty:
+        cr  = str(regime_df["regime"].iloc[-1]).upper()
+        cls = {"BULL":"pill-bull","NEUTRAL":"pill-neutral","BEAR":"pill-bear"}.get(cr,"pill-neutral")
+        ra_display = ra_map.get(regime_action, regime_action)
+        regime_badge = (f'&nbsp;&nbsp;|&nbsp;&nbsp;Latest Regime: <span class="{cls}">{cr}</span>'
+                       + (f'&nbsp;<span style="color:#7D8590;font-size:11px">[Bear: {ra_display}]</span>'
+                          if use_regime else ''))
 
-st.markdown(f"""
-<div style="background:#161B22;border:1px solid #21262D;border-radius:8px;
-            padding:10px 16px;margin-bottom:12px;font-size:13px;color:#8B949E;
-            display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-  <span>📅 <b style="color:#E6EDF3">{rebal}{dl}</b></span>
-  <span style="color:#30363D">|</span>
-  <span>📈 Entry: <b style="color:#E6EDF3">price &gt; {ma_type}({entry_fast}) &gt; {ma_type}({entry_slow})</b></span>
-  <span style="color:#30363D">|</span>
-  <span>📉 Exit: <b style="color:#E6EDF3">price &lt; {exit_ma_type}({exit_ma_p})</b></span>
-  <span style="color:#30363D">|</span>
-  <span>🏆 Rank: <b style="color:#E6EDF3">{rank_by}</b></span>
-  <span style="color:#30363D">|</span>
-  <span>💰 <b style="color:#E6EDF3">{alloc_mode}</b> · <b style="color:#E6EDF3">{sizing}</b></span>
-  {"<span style='color:#30363D'>|</span><span>🔒 Max <b style='color:#E6EDF3'>" + str(max_open_trades_val) + " trades</b></span>" if enable_trade_limit else ""}
-  {regime_badge}
-</div>
-""", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="background:#161B22;border:1px solid #21262D;border-radius:8px;
+                padding:10px 16px;margin-bottom:12px;font-size:13px;color:#8B949E;
+                display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <span>📅 <b style="color:#E6EDF3">{rebal}{dl}</b></span>
+      <span style="color:#30363D">|</span>
+      <span>📈 Entry: <b style="color:#E6EDF3">price &gt; {ma_type}({entry_fast}) &gt; {ma_type}({entry_slow})</b></span>
+      <span style="color:#30363D">|</span>
+      <span>📉 Exit: <b style="color:#E6EDF3">price &lt; {exit_ma_type}({exit_ma_p})</b></span>
+      <span style="color:#30363D">|</span>
+      <span>🏆 Rank: <b style="color:#E6EDF3">{rank_by}</b></span>
+      <span style="color:#30363D">|</span>
+      <span>💰 <b style="color:#E6EDF3">{alloc_mode}</b> · <b style="color:#E6EDF3">{sizing}</b></span>
+      {"<span style='color:#30363D'>|</span><span>🔒 Max <b style='color:#E6EDF3'>" + str(max_open_trades_val) + " trades</b></span>" if enable_trade_limit else ""}
+      {regime_badge}
+    </div>
+    """, unsafe_allow_html=True)
 st.markdown("---")
 
 
